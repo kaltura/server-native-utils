@@ -1,0 +1,26 @@
+Compilation
+============
+copy the sources to /usr/local/src/php-5.3.10/ext/kaltura
+cd /usr/local/src/php-5.3.10/ext/kaltura
+phpize
+./configure --enable-kaltura
+make
+strip modules/kaltura.so
+
+Installation - Fedora
+======================
+cp modules/kaltura.so /usr/local/lib/php/20090626/
+vi /usr/local/etc/php.ini add extension=kaltura.so			(after all the 'extension=...')
+service httpd graceful
+
+Installation - Ubuntu
+======================
+cp modules/kaltura.so /usr/lib/php5/20090626/
+vi /etc/php5/apache2/php.ini add extension=kaltura.so		(under Dynamic Extensions)
+service httpd graceful
+
+Test
+=====
+echo '<?echo kaltura_serialize_xml(730287.95, true);' > /opt/kaltura/app/alpha/web/testExt.php
+curl localhost/testExt.php
+php -r 'echo kaltura_serialize_xml(730287.95, true);'
