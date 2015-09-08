@@ -221,7 +221,8 @@ void kafka_conf_set_deinit(UDF_INIT* initid)
 
 
 /*
- * kafka_brokers_add(
+ * int 
+	kafka_brokers_add(
 		string brokers)
  */
 my_bool kafka_brokers_add_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
@@ -262,7 +263,8 @@ void kafka_brokers_add_deinit(UDF_INIT* initid)
 
 
 /*
- * kafka_topic_conf_set(
+ * int 
+	kafka_topic_conf_set(
 		string topic,
 		string key, 
 		string value)
@@ -311,7 +313,8 @@ void kafka_topic_conf_set_deinit(UDF_INIT* initid)
 
 
 /*
- * kafka_produce(
+ * int
+	kafka_produce(
 		string topic, 
 		int partition, 
 		string payload, 
