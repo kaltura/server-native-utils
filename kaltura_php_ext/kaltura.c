@@ -102,13 +102,16 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 {
 	serialize_params_t* params = va_arg(args, serialize_params_t*);
 	
-	smart_str_appendl_fixed(&params->buf, "<item>");
+	smart_str_appendl_fixed(&params->buf, "<item><itemKey>");
 	if (hash_key->nKeyLength > 0)
 	{		
-		smart_str_appendl_fixed(&params->buf, "<itemKey>");
 		smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
-		smart_str_appendl_fixed(&params->buf, "</itemKey>");
 	}
+	else
+	{
+		smart_str_append_long(&params->buf, hash_key->h);
+	}
+	smart_str_appendl_fixed(&params->buf, "</itemKey>");
 	kaltura_serialize_xml_internal(zv, params);
 	smart_str_appendl_fixed(&params->buf, "</item>");
 	return ZEND_HASH_APPLY_KEEP;
