@@ -184,7 +184,7 @@ get_topic_hash_item(
 	hash_item->hash_link.key[name_length] = '\0';
 	hash_item->hash_link.key_length = name_length;
 	hash_add(&topic_hash, &hash_item->hash_link);
-	insert_tail_list(&topic_list, &hash_item->list->link);
+	insert_tail_list(&topic_list, &hash_item->list_link);
 
 	return hash_item;
 }
@@ -441,7 +441,6 @@ kafka_reload(
 {
 	topic_hash_item_t* hash_item;
 	list_entry_t* cur;
-	longlong result = 0LL;
 
 	pthread_mutex_lock(&mutex);
 
