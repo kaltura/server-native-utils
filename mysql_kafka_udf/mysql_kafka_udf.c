@@ -37,19 +37,24 @@ typedef long long longlong;
 // typedefs
 typedef struct 
 {
-	hash_entry_t link;
+	hash_entry_t hash_link;
+	list_entry_t list_link;
 	rd_kafka_topic_conf_t* conf;
 	rd_kafka_topic_t* rkt;
 } topic_hash_item_t;
 
 // globals
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static hash_table_t topic_hash;
+static list_entry_t topic_list;
 static rd_kafka_conf_t* conf = NULL;
 static rd_kafka_t* rk = NULL;
-static hash_table_t topic_hash;
-static my_bool topic_hash_initialized = 0;
+static my_bool initialized = 0;
 
 
-void log_error(const char* message, ...)
+static void 
+log_error(
+	const char* message, ...)
 {
 	char buf[1024];
 	time_t t;
@@ -80,28 +85,32 @@ void log_error(const char* message, ...)
 	fprintf(stderr, "%s", buf);
 }
 
-
 static my_bool
-init_kafka_conf()
+global_init()
 {
-	if (conf != NULL)
+	if (initialized)
 	{
 		return 1;
 	}
-	
+
 	conf = rd_kafka_conf_new();
 	if (conf == NULL)
 	{
 		log_error("rd_kafka_conf_new failed\n");
 		return 0;
 	}
-	
+
+	hash_init(&topic_hash);
+	initialize_list_head(&topic_list);
+	initialized = 1;
+
 	return 1;
 }
 
 static my_bool 
 init_kafka()
 {
+	rd_kafka_conf_t* conf_dup;
 	char message[256];
 
 	if (rk != NULL)
@@ -109,12 +118,16 @@ init_kafka()
 		return 1;
 	}
 	
-	if (!init_kafka_conf())
+	// Note: duplicating the conf so that we can continue working on it,
+	//		rd_kafka_new frees the conf it gets as parameter.
+	conf_dup = rd_kafka_conf_dup(conf);
+	if (conf_dup == NULL)
 	{
+		log_error("rd_kafka_conf_dup failed\n");
 		return 0;
 	}
 	
-	rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, message, sizeof(message));
+	rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf_dup, message, sizeof(message));
 	if (rk == NULL)
 	{
 		log_error("rd_kafka_new failed, msg=%s\n", message);
@@ -125,25 +138,24 @@ init_kafka()
 }
 
 static topic_hash_item_t*
-get_topic_hash_item(const char* name, size_t name_length)
+get_topic_hash_item(
+	const char* name, 
+	size_t name_length)
 {
 	topic_hash_item_t* hash_item;
 	hash_entry_t* hash_entry;
 	
-	if (!topic_hash_initialized)
+	if (!initialized && !global_init())
 	{
-		hash_init(&topic_hash);
-		topic_hash_initialized = 1;
+		return NULL;
 	}
 	
-	// XXXXXX locking
 	hash_entry = hash_lookup(&topic_hash, name, name_length);
 	if (hash_entry != NULL)
 	{
-		return container_of(hash_entry, topic_hash_item_t, link);
+		return container_of(hash_entry, topic_hash_item_t, hash_link);
 	}
 
-	// XXXX cleanup in case of error + error messages
 	hash_item = calloc(sizeof(*hash_item), 1);
 	if (hash_item == NULL)
 	{
@@ -151,25 +163,28 @@ get_topic_hash_item(const char* name, size_t name_length)
 		return NULL;
 	}
 
-	hash_item->link.key = malloc(name_length + 1);
-	if (hash_item->link.key == NULL)
+	hash_item->hash_link.key = malloc(name_length + 1);
+	if (hash_item->hash_link.key == NULL)
 	{
 		log_error("failed to allocate topic name\n");
+		free(hash_item);
 		return NULL;
 	}
-	memcpy(hash_item->link.key, name, name_length);
-	hash_item->link.key[name_length] = '\0';
-	
-	hash_item->link.key_length = name_length;
 
 	hash_item->conf = rd_kafka_topic_conf_new();
 	if (hash_item->conf == NULL)
 	{
 		log_error("rd_kafka_topic_conf_new failed\n");
+		free(hash_item->hash_link.key);
+		free(hash_item);
 		return NULL;
 	}
 	
-	hash_add(&topic_hash, &hash_item->link);
+	memcpy(hash_item->hash_link.key, name, name_length);
+	hash_item->hash_link.key[name_length] = '\0';
+	hash_item->hash_link.key_length = name_length;
+	hash_add(&topic_hash, &hash_item->hash_link);
+	insert_tail_list(&topic_list, &hash_item->list->link);
 
 	return hash_item;
 }
@@ -180,7 +195,11 @@ get_topic_hash_item(const char* name, size_t name_length)
 		string key, 
 		string value)
  */
-my_bool kafka_conf_set_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
+my_bool 
+kafka_conf_set_init(
+	UDF_INIT* initid, 
+	UDF_ARGS* args, 
+	char* message)
 {
 	if (args->arg_count != 2 || 
 		args->arg_type[0] != STRING_RESULT || args->args[0] == NULL ||	// key
@@ -193,71 +212,42 @@ my_bool kafka_conf_set_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
 	return 0;
 }
 
-longlong kafka_conf_set(UDF_INIT* initid, UDF_ARGS* args,
-                   char* is_null,
-                   char* error)
+longlong 
+kafka_conf_set(
+	UDF_INIT* initid, 
+	UDF_ARGS* args,
+	char* is_null,
+	char* error)
 {
 	rd_kafka_conf_res_t rc;
 	char message[256];
+	longlong result = 0LL;
 
-	if (!init_kafka_conf())
+	pthread_mutex_lock(&mutex);
+
+	if (!initialized && !global_init())
 	{
-		return 0LL;
+		goto done;
 	}
 
 	rc = rd_kafka_conf_set(conf, args->args[0], args->args[1], message, sizeof(message));
 	if (rc != RD_KAFKA_CONF_OK)
 	{
 		log_error("rd_kafka_conf_set failed, rc=%d msg=%s\n", rc, message);
-		return 0LL;
+		goto done;
 	}
 
-	return 1LL;
+	result = 1LL;
+
+done:
+
+	pthread_mutex_unlock(&mutex);
+	return result;
 }
 
-void kafka_conf_set_deinit(UDF_INIT* initid)
-{
-}
-
-
-/*
- * int 
-	kafka_brokers_add(
-		string brokers)
- */
-my_bool kafka_brokers_add_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
-{
-	if (args->arg_count != 1 || 
-		args->arg_type[0] != STRING_RESULT || args->args[0] == NULL)	// brokers
-	{
-		strncpy(message, "Usage: kafka_brokers_add(<brokers>)", MYSQL_ERRMSG_SIZE);
-		return 1;
-	}
-
-	return 0;
-}
-
-longlong kafka_brokers_add(UDF_INIT* initid, UDF_ARGS* args,
-                   char* is_null,
-                   char* error)
-{
-	int rc;
-	
-	if (!init_kafka())
-	{
-		return 0LL;
-	}
-
-	rc = rd_kafka_brokers_add(rk, args->args[0]);
-	if (rc == 0) 
-	{
-		log_error("rd_kafka_brokers_add failed\n");
-	}
-
-	return rc;
-}
-
-void kafka_brokers_add_deinit(UDF_INIT* initid)
+void 
+kafka_conf_set_deinit(
+	UDF_INIT* initid)
 {
 }
 
@@ -269,7 +259,11 @@ void kafka_brokers_add_deinit(UDF_INIT* initid)
 		string key, 
 		string value)
  */
-my_bool kafka_topic_conf_set_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
+my_bool 
+kafka_topic_conf_set_init(
+	UDF_INIT* initid, 
+	UDF_ARGS* args, 
+	char* message)
 {
 	if (args->arg_count != 3 || 
 		args->arg_type[0] != STRING_RESULT || args->args[0] == NULL ||	// topic
@@ -283,31 +277,44 @@ my_bool kafka_topic_conf_set_init(UDF_INIT* initid, UDF_ARGS* args, char* messag
 	return 0;
 }
 
-longlong kafka_topic_conf_set(UDF_INIT* initid, UDF_ARGS* args,
-                   char* is_null,
-                   char* error)
+longlong 
+kafka_topic_conf_set(
+	UDF_INIT* initid, 
+	UDF_ARGS* args,
+	char* is_null,
+	char* error)
 {
 	rd_kafka_conf_res_t rc;
 	topic_hash_item_t* hash_item;
+	longlong result = 0LL;
 	char message[256];
+
+	pthread_mutex_lock(&mutex);
 
 	hash_item = get_topic_hash_item(args->args[0], args->lengths[0]);
 	if (hash_item == NULL)
 	{
-		return 0LL;
+		goto done;
 	}
 	
 	rc = rd_kafka_topic_conf_set(hash_item->conf, args->args[1], args->args[2], message, sizeof(message));
 	if (rc != RD_KAFKA_CONF_OK)
 	{
 		log_error("rd_kafka_topic_conf_set failed, rc=%d msg=%s\n", rc, message);
-		return 0LL;
+		goto done;
 	}
 
-	return 1LL;
+	result = 1LL;
+
+done:
+
+	pthread_mutex_unlock(&mutex);
+	return result;
 }
 
-void kafka_topic_conf_set_deinit(UDF_INIT* initid)
+void 
+kafka_topic_conf_set_deinit(
+	UDF_INIT* initid)
 {
 }
 
@@ -320,7 +327,11 @@ void kafka_topic_conf_set_deinit(UDF_INIT* initid)
 		string payload, 
 		string optional key)
  */
-my_bool kafka_produce_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
+my_bool 
+kafka_produce_init(
+	UDF_INIT* initid, 
+	UDF_ARGS* args, 
+	char* message)
 {
 	if (args->arg_count != 4 || 
 		args->arg_type[0] != STRING_RESULT || args->args[0] == NULL ||		// topic
@@ -335,30 +346,47 @@ my_bool kafka_produce_init(UDF_INIT* initid, UDF_ARGS* args, char* message)
 	return 0;
 }
 
-longlong kafka_produce(UDF_INIT* initid, UDF_ARGS* args,
-                   char* is_null,
-                   char* error)
+longlong 
+kafka_produce(
+	UDF_INIT* initid, 
+	UDF_ARGS* args,
+	char* is_null,
+	char* error)
 {
+	rd_kafka_topic_conf_t *conf_dup;
 	topic_hash_item_t* hash_item;
+	longlong result = 0LL;
 	int rc;
+
+	pthread_mutex_lock(&mutex);
 
 	hash_item = get_topic_hash_item(args->args[0], args->lengths[0]);
 	if (hash_item == NULL)
 	{
-		return 0LL;
+		goto done;
 	}
 	
 	if (hash_item->rkt == NULL)
 	{
-		if (!init_kafka())
+		if (rk == NULL && !init_kafka())
 		{
-			return 0LL;
+			goto done;
 		}
 		
-		hash_item->rkt = rd_kafka_topic_new(rk, args->args[0], hash_item->conf);
+		// Note: duplicating the conf so that we can continue working on it,
+		//		rd_kafka_topic_new frees the conf it gets as parameter.
+		conf_dup = rd_kafka_topic_conf_dup(hash_item->conf);
+		if (conf_dup == NULL)
+		{
+			log_error("rd_kafka_topic_conf_dup failed");
+			goto done;
+		}
+
+		hash_item->rkt = rd_kafka_topic_new(rk, args->args[0], conf_dup);
 		if (hash_item->rkt == NULL)
 		{
-			return 0LL;
+			log_error("rd_kafka_topic_new failed");
+			goto done;
 		}
 	}
 	
@@ -374,13 +402,72 @@ longlong kafka_produce(UDF_INIT* initid, UDF_ARGS* args,
 	if (rc != RD_KAFKA_CONF_OK)
 	{
 		log_error("kafka_produce failed, rc=%d errno=%d\n", rc, errno);
-		return 0LL;
+		goto done;
 	}
 
+	result = 1LL;
+
+done:
+
+	pthread_mutex_unlock(&mutex);
+	return result;
+}
+
+void 
+kafka_produce_deinit(
+	UDF_INIT* initid)
+{
+}
+
+/*
+ * void
+	kafka_reload()
+ */
+my_bool 
+kafka_reload_init(
+	UDF_INIT* initid, 
+	UDF_ARGS* args, 
+	char* message)
+{
+	return 0;
+}
+
+longlong 
+kafka_reload(
+	UDF_INIT* initid, 
+	UDF_ARGS* args,
+	char* is_null,
+	char* error)
+{
+	topic_hash_item_t* hash_item;
+	list_entry_t* cur;
+	longlong result = 0LL;
+
+	pthread_mutex_lock(&mutex);
+
+	for (cur = topic_list.next; cur != &topic_list; cur = cur->next)
+	{
+		hash_item = container_of(cur, topic_hash_item_t, list_link);
+
+		if (hash_item->rkt == NULL)
+		{
+			continue;
+		}
+
+		rd_kafka_topic_destroy(hash_item->rkt);
+		hash_item->rkt = NULL;
+	}
+
+	rd_kafka_destroy(rk);
+	rk = NULL;
+
+	pthread_mutex_unlock(&mutex);
 	return 1LL;
 }
 
-void kafka_produce_deinit(UDF_INIT* initid)
+void 
+kafka_reload_deinit(
+	UDF_INIT* initid)
 {
 }
 

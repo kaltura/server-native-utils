@@ -1,3 +1,4 @@
+#include <string.h>
 #include <stdint.h>
 #include <sys/types.h>
 #include "hash.h"
@@ -63,7 +64,7 @@ hash_lookup(hash_table_t* hash, const char* key, size_t key_length)
 	hash_entry_t* hash_entry;
 	size_t hash_value;
 	
-	hash_value = murmur_hash(key, key_length) % HASH_SIZE;
+	hash_value = murmur_hash((const u_char*)key, key_length) % HASH_SIZE;
 	list = &hash->heads[hash_value];
 	
 	for (cur = list->next; cur != list; cur = cur->next)
@@ -83,10 +84,9 @@ void
 hash_add(hash_table_t* hash, hash_entry_t* node)
 {
 	list_entry_t* list;
-	hash_entry_t* cur;
 	size_t hash_value;
 	
-	hash_value = murmur_hash(node->key, node->key_length) % HASH_SIZE;
+	hash_value = murmur_hash((const u_char*)node->key, node->key_length) % HASH_SIZE;
 	list = &hash->heads[hash_value];
 
 	insert_tail_list(list, &node->link);
