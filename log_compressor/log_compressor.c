@@ -49,12 +49,14 @@
 #define SHUTDOWN_SIGNAL SIGQUIT
 
 #define UNIX_DGRAM_PREFIX "udg://"
+#define FILE_PREFIX "file://"
 
 // typedefs
 typedef void *(*thread_func_t)(void *arg);
 
 typedef struct {
 	int input_fd;
+	int input_type;
 	int inotify_fd;
 	buffer_pool_t read_pool;
 	buffer_pool_t comp_pool;
@@ -66,6 +68,7 @@ typedef struct {
 enum {		// input types
 	IT_UNIX_DGRAM,
 	IT_PIPE,
+	IT_FILE,
 };
 
 // globals
@@ -296,6 +299,7 @@ reader_thread(void* context)
 	itp_buffer_t output_buffer;
 	u_char* buffer;
 	u_char* next_out;
+	bool_t wait = state->input_type == IT_FILE ? TRUE : FALSE;
 	size_t avail_out;
 	int last_reopen_files = 0;
 
@@ -326,7 +330,7 @@ reader_thread(void* context)
 				output_buffer.flags = (last_reopen_files != reopen_files) ? FLAG_REOPEN_FILE : 0;
 			}
 			
-			if (itp_write(&state->reader_to_compressor, &output_buffer, FALSE))		// don't wait
+			if (itp_write(&state->reader_to_compressor, &output_buffer, wait))
 			{
 				if (output_buffer.flags == FLAG_REOPEN_FILE)
 				{
@@ -362,6 +366,13 @@ reader_thread(void* context)
 			{
 				log_print("reader_thread: read failed %d", errno);
 				goto error;
+			}
+			
+			if (state->input_type == IT_FILE)
+			{
+				shutdown_signalled = 1;
+				sem_post(&thread_error_sem);		// wake up the main thread
+				continue;
 			}
 			
 			if (state->inotify_fd == -1)
@@ -623,6 +634,23 @@ init_pipe(state_t* state, const char* path, const char* owner)
 }
 
 static bool_t
+init_file(state_t* state, const char* path)
+{
+	log_print("init_file: opening %s", path);
+
+	state->input_fd = open(path, O_RDONLY);
+	if (state->input_fd == -1)
+	{
+		log_print("init_file: open input file failed %d", errno);
+		return FALSE;
+	}
+	
+	state->inotify_fd = -1;
+		
+	return TRUE;
+}
+
+static bool_t
 init_state(state_t* state, const char* input_owner, char *args)
 {
 	char input_path[PATH_MAX];
@@ -633,6 +661,11 @@ init_state(state_t* state, const char* input_owner, char *args)
 	{
 		args += sizeof(UNIX_DGRAM_PREFIX) - 1;
 		input_type = IT_UNIX_DGRAM;
+	}
+	else if (strncmp(FILE_PREFIX, args, sizeof(FILE_PREFIX) - 1) == 0)
+	{
+		args += sizeof(FILE_PREFIX) - 1;
+		input_type = IT_FILE;
 	}
 	else
 	{
@@ -664,6 +697,13 @@ init_state(state_t* state, const char* input_owner, char *args)
 			return FALSE;
 		}
 		break;
+
+	case IT_FILE:
+		if (!init_file(state, input_path))
+		{
+			return FALSE;
+		}
+		break;
 	}
 	
 	if (!buffer_pool_init(&state->read_pool, BUFFER_SIZE_READ))
@@ -691,6 +731,7 @@ init_state(state_t* state, const char* input_owner, char *args)
 	}
 	
 	state->output_filename = colon_pos + 1;
+	state->input_type = input_type;
 	
 	return TRUE;
 }
@@ -750,6 +791,80 @@ static thread_func_t threads[] = {
 	reader_thread,
 	compressor_thread,
 };
+
+static bool_t
+file_mode_main(const char* path)
+{
+	pthread_t* cur_tinfo;
+	pthread_t tinfos[ARRAY_ELEMENTS(threads)];
+	state_t state;
+	size_t path_len = strlen(path);
+	unsigned thread_index;
+	char* args;
+	int rc;
+	
+	log_file = stderr;
+
+	// create a semaphore that threads can use to notify errors
+	rc = sem_init(&thread_error_sem, 0, 0);
+	if (rc != 0)
+	{
+		log_print("main_thread: sem_init failed %d", errno);
+		return FALSE;
+	}
+	
+	args = malloc(sizeof(FILE_PREFIX) + 2 * path_len + sizeof(":.gz"));
+	if (args == NULL)
+	{
+		log_print("main_thread: malloc failed");
+		return FALSE;
+	}
+	
+	sprintf(args, "%s%s:%s.gz", FILE_PREFIX, path, path);
+
+	if (!init_state(&state, NULL, args))
+	{
+		log_print("main_thread: init_state failed");
+		return FALSE;
+	}
+
+	cur_tinfo = tinfos;
+	for (thread_index = 0; thread_index < ARRAY_ELEMENTS(threads); thread_index++)
+	{
+		rc = pthread_create(cur_tinfo, NULL, threads[thread_index], &state);
+		if (rc != 0)
+		{
+			log_print("main_thread: pthread_create failed %d", rc);
+			return FALSE;
+		}
+		cur_tinfo++;
+	}
+	
+	log_print("main_thread: started");
+	
+	rc = sem_wait(&thread_error_sem);
+	if (rc != 0)
+	{
+		log_print("main_thread: sem_wait failed %d", errno);
+		return FALSE;
+	}
+	
+	if (shutdown_signalled)
+	{
+		for (thread_index = 0; thread_index < ARRAY_ELEMENTS(threads); thread_index++)
+		{
+			pthread_join(tinfos[thread_index], NULL);
+		}
+		
+		log_print("main_thread: all threads finished");
+	}
+	else
+	{
+		log_print("main_thread: thread error event signalled, quitting...");
+	}
+	
+	return TRUE;
+}
 
 static bool_t
 main_thread(int argc, char *argv[])
@@ -870,14 +985,24 @@ int
 main(int argc, char *argv[])
 {
 	pid_t pid, sid;
-	
+
 	// validate args
 	if (argc < 3)
 	{
-		printf("Usage:\n\tlog_compressor <owner> <input file>:<output file> [ <input file>:<output file> [ ... ] ]\n");
+		printf("Usage:\n\
+  daemon mode:\n\
+    log_compressor <owner> <input file>:<output file> [ <input file>:<output file> [ ... ] ]\n\
+  file mode:\n\
+    log_compressor -f <input file>\n");
 		return 1;
 	}
     
+	// check for file mode
+	if (argc == 3 && strcmp(argv[1], "-f") == 0)
+	{
+		return file_mode_main(argv[2]) ? 0 : 1;
+	}
+	
 	// fork off the parent process
 	pid = fork();
 	if (pid == -1) 
