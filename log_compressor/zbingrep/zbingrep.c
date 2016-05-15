@@ -77,8 +77,8 @@ static struct option const long_options[] =
 {
   {"no-filename", no_argument, NULL, 'h'},
   {"with-filename", no_argument, NULL, 'H'},
-  {"pattern",    required_argument, NULL, 'p'},
-  {"end",    required_argument, NULL, 'e'},
+  {"pattern", required_argument, NULL, 'p'},
+  {"end", required_argument, NULL, 'e'},
   {"help", no_argument, &show_help, 1},
   {0, 0, 0, 0}
 };
@@ -356,7 +356,7 @@ search_compare_first_match(buffer_t* cur_buffer, size_t* buffer_start_offset)
 			continue;
 		}
 		
-		// get the line count from the current offset
+		// run compare starting from the current offset
 		result = inflate_compare_first_match(cur_buffer, cur_pos - start_pos);
 		if (result != COMPARE_ERROR)
 		{
