@@ -1,0 +1,1 @@
+gcc -O2 -Wall -o zbingrep zbingrep.c -lz -lpcre
