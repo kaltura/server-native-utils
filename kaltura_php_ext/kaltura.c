@@ -466,7 +466,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 	zend_uint class_name_len;
 
 	switch (Z_TYPE_P(*arg)) {
+	#if (PHP_VERSION_ID >= 70000)
+		case _IS_BOOL:
+	#else
 		case IS_BOOL:
+	#endif
 			if (Z_LVAL_P(*arg))
 				smart_str_appendc(&params->buf, '1');
 			else
