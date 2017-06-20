@@ -463,6 +463,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 #else
 	char *class_name;
 #endif
+	zval dummy;
 	zend_uint class_name_len;
 
 	switch (Z_TYPE_P(*arg)) {
@@ -498,11 +499,10 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			break;
 
 		case IS_OBJECT:
-			zval dummy;
 			// handle KalturaAssociativeArray
 			if (kaltura_associative_array_ce == NULL)
 				#if PHP_VERSION_ID >= 70000
-					kaltura_associative_array_ce = zend_hash_str_find(EG(class_table), "kalturaassociativearray", sizeof("kalturaassociativearray") - 1);
+					kaltura_associative_array_ce = zend_hash_str_find_ptr(EG(class_table), "kalturaassociativearray", sizeof("kalturaassociativearray") - 1);
 				#else
 					zend_hash_find(EG(class_table), "kalturaassociativearray", sizeof("kalturaassociativearray"), (void **) &kaltura_associative_array_ce);
 				#endif
@@ -523,7 +523,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			// handle KalturaTypedArray
 			if (kaltura_typed_array_ce == NULL)
 				#if PHP_VERSION_ID >= 70000
-					kaltura_typed_array_ce = zend_hash_str_find(EG(class_table), "kalturatypedarray", sizeof("kalturatypedarray") - 1);
+					kaltura_typed_array_ce = zend_hash_str_find_ptr(EG(class_table), "kalturatypedarray", sizeof("kalturatypedarray") - 1);
 				#else
 					zend_hash_find(EG(class_table), "kalturatypedarray", sizeof("kalturatypedarray"), (void **) &kaltura_typed_array_ce);
 				#endif				
