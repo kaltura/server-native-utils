@@ -87,7 +87,6 @@ static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_arg
 	smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
 	smart_str_appendl_fixed(&params->buf, "</name><value>");	
 	write_string_xml_encoded(&params->buf, Z_STRVAL_P(*zv));
-	#endif
 	smart_str_appendl_fixed(&params->buf, "</value></item>");
 	
 	return ZEND_HASH_APPLY_KEEP;
@@ -557,10 +556,10 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				smart_str_appendl(&params->buf, class_name, class_name_len);
 				smart_str_appendl_fixed(&params->buf, "</objectType><code>");
 				#if PHP_VERSION_ID >= 70000
-                	prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0, &dummy);
-                #else
-                	prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0 TSRMLS_CC);
-                #endif
+					prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0, &dummy);
+				#else
+					prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0 TSRMLS_CC);
+				#endif
 				kaltura_serialize_xml_internal(&prop, params);
 				smart_str_appendl_fixed(&params->buf, "</code><message>");
 				#if PHP_VERSION_ID >= 70000
