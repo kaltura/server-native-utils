@@ -76,15 +76,21 @@ PHP_FUNCTION(kaltura_serialize_xml)
 static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_args, va_list args, zend_hash_key *hash_key)
 {
 	serialize_params_t* params;
-	
-	if (hash_key->nKeyLength == 0 || 		// not a string key
-		Z_TYPE_P(*zv) != IS_STRING)			// not a string value
+#if (PHP_VERSION_ID >= 70000)
+	if (hash_key->key == NULL || Z_TYPE_P(*zv) != IS_STRING) // not a string key || not a string value
+#else
+	if (hash_key->nKeyLength == 0 || Z_TYPE_P(*zv) != IS_STRING) // not a string key || not a string value
+#endif
 		return ZEND_HASH_APPLY_KEEP;
 		
 	params = va_arg(args, serialize_params_t*);
 	
 	smart_str_appendl_fixed(&params->buf, "<item><objectType>KalturaApiExceptionArg</objectType><name>");
+#if (PHP_VERSION_ID >= 70000)
+	smart_str_appendl(&params->buf, hash_key->key, hash_key->key->len - 1);
+#else
 	smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
+#endif
 	smart_str_appendl_fixed(&params->buf, "</name><value>");	
 	write_string_xml_encoded(&params->buf, Z_STRVAL_P(*zv));
 	smart_str_appendl_fixed(&params->buf, "</value></item>");
@@ -107,10 +113,18 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 	serialize_params_t* params = va_arg(args, serialize_params_t*);
 	
 	smart_str_appendl_fixed(&params->buf, "<item><itemKey>");
+	
+#if (PHP_VERSION_ID >= 70000)
+	if (hash_key->key != NULL)
+	{		
+		smart_str_appendl(&params->buf, hash_key->key, hash_key->key->len - 1);
+	}
+#else
 	if (hash_key->nKeyLength > 0)
 	{		
 		smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
 	}
+#endif
 	else
 	{
 		smart_str_append_long(&params->buf, hash_key->h);
@@ -132,16 +146,24 @@ static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_ar
 	int prop_name_len = 0;
 	int mangled;
 
-	if (hash_key->nKeyLength == 0) 
+#if (PHP_VERSION_ID >= 70000)
+	if (hash_key->key == NULL)
+#else
+	if (hash_key->nKeyLength == 0)
+#endif
 		return ZEND_HASH_APPLY_KEEP;		// not a string key
 		
 	if (params->ignore_null && Z_TYPE_P(*zv) == IS_NULL)
 		return ZEND_HASH_APPLY_KEEP;		// null property
-	
-#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
-	mangled = zend_unmangle_property_name(hash_key->arKey, hash_key->nKeyLength - 1, &class_name, &prop_name);
+
+#if (PHP_VERSION_ID >= 70000)
+	mangled = zend_unmangle_property_name(hash_key->key, hash_key->key->len - 1, &class_name, &prop_name);
 #else
+	#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
+	mangled = zend_unmangle_property_name(hash_key->arKey, hash_key->nKeyLength - 1, &class_name, &prop_name);
+	#else
 	mangled = zend_unmangle_property_name_ex(hash_key->arKey, hash_key->nKeyLength - 1, &class_name, &prop_name, &prop_name_len);
+	#endif
 #endif
 	if (class_name && mangled == SUCCESS)
 		return ZEND_HASH_APPLY_KEEP;		// private or protected (class_name == '*')
