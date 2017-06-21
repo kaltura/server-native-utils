@@ -4,6 +4,7 @@
 #include "php.h"
 #include "php_kaltura.h"
 #include "php_smart_str.h"
+#include "zend_exceptions.h"
 
 #define smart_str_appendl_fixed(dest, src) \
 	smart_str_appendl_ex((dest), (src), sizeof(src) - 1, 0)
@@ -157,7 +158,8 @@ static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_ar
 		return ZEND_HASH_APPLY_KEEP;		// null property
 
 #if (PHP_VERSION_ID >= 70000)
-	mangled = zend_unmangle_property_name(hash_key->key, hash_key->key->len - 1, &class_name, &prop_name);
+	size_t key_len = hash_key->key->len - 1;
+	mangled = zend_unmangle_property_name_ex(hash_key->key, &class_name, &prop_name, &key_len);
 #else
 	#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
 	mangled = zend_unmangle_property_name(hash_key->arKey, hash_key->nKeyLength - 1, &class_name, &prop_name);
