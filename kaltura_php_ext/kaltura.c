@@ -578,7 +578,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				break;
 			}
 
+		#if PHP_VERSION_ID >= 70000
+			Z_OBJ_HANDLER(**arg, get_class_name)(Z_OBJ_P(*arg));
+		#else
 			Z_OBJ_HANDLER(**arg, get_class_name)(*arg, &class_name, &class_name_len, 0 TSRMLS_CC);
+		#endif
 		
 			if (instanceof_function(Z_OBJCE_P(*arg), zend_exception_get_default(TSRMLS_C)))
 			{
