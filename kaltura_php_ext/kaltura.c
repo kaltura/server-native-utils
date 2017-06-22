@@ -75,8 +75,11 @@ PHP_FUNCTION(kaltura_serialize_xml)
 {
 	serialize_params_t params = {{0}};
 	zval **arg;
-
+#if (PHP_VERSION_ID >= 70000)
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zb", &arg, &params.ignore_null) == FAILURE) {
+#else
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "Zb", &arg, &params.ignore_null) == FAILURE) {
+#endif
 		return;
 	}
 	
