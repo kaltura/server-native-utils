@@ -8,7 +8,7 @@
 #if (PHP_VERSION_ID < 70000)
 #include "php_smart_str.h"
 #else
-#include "zend_smart_str.h"
+#include "ext/standard/php_smart_string.h"
 #endif
 
 
@@ -22,7 +22,11 @@
 
 ZEND_API zend_class_entry *zend_exception_get_default(TSRMLS_D);
 
+#if (PHP_VERSION_ID >= 70000)
+static void write_string_xml_encoded(smart_string* buf, const char* str);
+#else
 static void write_string_xml_encoded(smart_str* buf, const char* str);
+#endif
 
 static zend_class_entry **kaltura_typed_array_ce = NULL;
 static zend_class_entry **kaltura_associative_array_ce = NULL;
@@ -34,7 +38,11 @@ static zend_function_entry kaltura_functions[] = {
 
 typedef struct
 {
+#if (PHP_VERSION_ID >= 70000)
+	smart_string buf;
+#else
 	smart_str buf;
+#endif
 	int ignore_null;
 } serialize_params_t;
 
@@ -473,7 +481,11 @@ const char* xml_encode_table[256] = {
 	NULL,
 };
 
+#if (PHP_VERSION_ID >= 70000)
+static void write_string_xml_encoded(smart_string* buf, const char* str)
+#else
 static void write_string_xml_encoded(smart_str* buf, const char* str)
+#endif
 {
 	const char* chunkStart = str;
 	const char* escaped;
@@ -512,7 +524,11 @@ static int kaltura_request_startup_func(INIT_FUNC_ARGS)
 	kaltura_associative_array_ce = NULL;
 }
 
+#if (PHP_VERSION_ID >= 70000)
+static int smart_str_append_double(smart_string* buf, double val)
+#else
 static int smart_str_append_double(smart_str* buf, double val)
+#endif
 {
 	char temp_buf[MAX_LENGTH_OF_DOUBLE];
 	sprintf(temp_buf, "%.*G", (int) EG(precision), val);
