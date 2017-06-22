@@ -28,8 +28,13 @@ static void write_string_xml_encoded(smart_string* buf, const char* str);
 static void write_string_xml_encoded(smart_str* buf, const char* str);
 #endif
 
+#if (PHP_VERSION_ID >= 70000)
+static zend_class_entry *kaltura_typed_array_ce = NULL;
+static zend_class_entry *kaltura_associative_array_ce = NULL;
+#else
 static zend_class_entry **kaltura_typed_array_ce = NULL;
 static zend_class_entry **kaltura_associative_array_ce = NULL;
+#endif
 
 static zend_function_entry kaltura_functions[] = {
     PHP_FE(kaltura_serialize_xml, NULL)
@@ -616,15 +621,15 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			if (kaltura_associative_array_ce == NULL)
 				#if PHP_VERSION_ID >= 70000
 					kaltura_associative_array_ce = zend_hash_str_find_ptr(EG(class_table), "kalturaassociativearray", sizeof("kalturaassociativearray") - 1);
+				if (kaltura_associative_array_ce != NULL && instanceof_function(Z_OBJCE_P(*arg), kaltura_associative_array_ce))
 				#else
 					zend_hash_find(EG(class_table), "kalturaassociativearray", sizeof("kalturaassociativearray"), (void **) &kaltura_associative_array_ce);
+				if (kaltura_associative_array_ce != NULL && instanceof_function(Z_OBJCE_P(*arg), *kaltura_associative_array_ce))
 				#endif
-			if (kaltura_associative_array_ce != NULL && 
-				instanceof_function(Z_OBJCE_P(*arg), *kaltura_associative_array_ce))
 			{
 				zval *arr;
 				#if PHP_VERSION_ID >= 70000
-					arr = zend_read_property(*kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
+					arr = zend_read_property(kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
 				#else
 					arr = zend_read_property(*kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0 TSRMLS_CC);
 				#endif
@@ -637,16 +642,15 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			if (kaltura_typed_array_ce == NULL)
 				#if PHP_VERSION_ID >= 70000
 					kaltura_typed_array_ce = zend_hash_str_find_ptr(EG(class_table), "kalturatypedarray", sizeof("kalturatypedarray") - 1);
+				if (kaltura_typed_array_ce != NULL && instanceof_function(Z_OBJCE_P(*arg), kaltura_typed_array_ce))
 				#else
 					zend_hash_find(EG(class_table), "kalturatypedarray", sizeof("kalturatypedarray"), (void **) &kaltura_typed_array_ce);
+				if (kaltura_typed_array_ce != NULL && instanceof_function(Z_OBJCE_P(*arg), *kaltura_typed_array_ce))
 				#endif				
-
-			if (kaltura_typed_array_ce != NULL && 
-				instanceof_function(Z_OBJCE_P(*arg), *kaltura_typed_array_ce))
 			{
 				zval *arr;
 				#if PHP_VERSION_ID >= 70000
-					arr = zend_read_property(*kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
+					arr = zend_read_property(kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
 				#else
 					arr = zend_read_property(*kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0 TSRMLS_CC);
 				#endif
