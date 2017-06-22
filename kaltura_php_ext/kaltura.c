@@ -74,20 +74,27 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 PHP_FUNCTION(kaltura_serialize_xml)
 {
 	serialize_params_t params = {{0}};
-	zval **arg;
 #if (PHP_VERSION_ID >= 70000)
+	zval *arg;
+
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zb", &arg, &params.ignore_null) == FAILURE) {
-#else
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "Zb", &arg, &params.ignore_null) == FAILURE) {
-#endif
 		return;
 	}
-	
+
+	kaltura_serialize_xml_internal(&arg, &params);
+#else
+	zval **arg;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "Zb", &arg, &params.ignore_null) == FAILURE) {
+		return;
+	}
+
 	kaltura_serialize_xml_internal(arg, &params);
-	
+#endif	
+
 	if (params.buf.c) {
 		#if (PHP_VERSION_ID >= 70000)
-			RETURN_STRINGL(params.buf.c, params.buf.len)
+			RETURN_STRINGL(params.buf.c, params.buf.len);
 		#else
 			RETURN_STRINGL(params.buf.c, params.buf.len, 0);
 		#endif
@@ -114,7 +121,7 @@ static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_arg
 #else
 	smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
 #endif
-	smart_str_appendl_fixed(&params->buf, "</name><value>");	
+	smart_str_appendl_fixed(&params->buf, "</name><value>");
 	write_string_xml_encoded(&params->buf, Z_STRVAL_P(*zv));
 	smart_str_appendl_fixed(&params->buf, "</value></item>");
 	
@@ -561,6 +568,8 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 	switch (Z_TYPE_P(*arg)) {
 	#if (PHP_VERSION_ID >= 70000)
 		case _IS_BOOL:
+		case IS_TRUE:
+		case IS_FALSE:
 	#else
 		case IS_BOOL:
 	#endif
