@@ -567,7 +567,6 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 
 	switch (Z_TYPE_P(*arg)) {
 	#if (PHP_VERSION_ID >= 70000)
-		case _IS_BOOL:
 		case IS_TRUE:
 		case IS_FALSE:
 	#else
