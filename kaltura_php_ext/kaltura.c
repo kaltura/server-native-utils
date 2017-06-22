@@ -191,7 +191,7 @@ static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_ar
 		return ZEND_HASH_APPLY_KEEP;		// null property
 
 #if (PHP_VERSION_ID >= 70000)
-	size_t key_len = hash_key->key->len - 1;
+	size_t key_len;
 	mangled = zend_unmangle_property_name_ex(hash_key->key, &class_name, &prop_name, &key_len);
 #else
 	#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
@@ -202,10 +202,8 @@ static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_ar
 #endif
 	if (class_name && mangled == SUCCESS)
 		return ZEND_HASH_APPLY_KEEP;		// private or protected (class_name == '*')
-
-#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
+ 
 	prop_name_len = strlen(prop_name);
-#endif
 
 #if (PHP_VERSION_ID >= 70000)
 	smart_string_appendc(&params->buf, '<');
@@ -552,15 +550,18 @@ static int smart_str_append_double(smart_str* buf, double val)
 PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* params) 
 {
 	HashTable *myht;
-#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 3) || (PHP_MAJOR_VERSION > 5)
-	const char *class_name;
+#if PHP_VERSION_ID >= 70000
+	zend_string *class_name;
 #else
+	#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 3) || (PHP_MAJOR_VERSION > 5)
+	const char *class_name;
+	#else
 	char *class_name;
+	#endif
 #endif
 
 #if (PHP_VERSION_ID >= 70000)
 	zval dummy;
-	uint32_t class_name_len;
 #else
 	zend_uint class_name_len;
 #endif
@@ -662,7 +663,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			}
 
 		#if PHP_VERSION_ID >= 70000
-			Z_OBJ_HANDLER(**arg, get_class_name)(Z_OBJ_P(*arg));
+			class_name=Z_OBJ_HANDLER(**arg, get_class_name)(Z_OBJ_P(*arg));
 		#else
 			Z_OBJ_HANDLER(**arg, get_class_name)(*arg, &class_name, &class_name_len, 0 TSRMLS_CC);
 		#endif
@@ -674,7 +675,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			
 				smart_str_appendl_fixed(&params->buf, "<error><objectType>");
 			#if PHP_VERSION_ID >= 70000
-				smart_string_appendl(&params->buf, class_name, class_name_len);
+				smart_string_appendl(&params->buf, class_name->val, class_name->len);
 			#else
 				smart_str_appendl(&params->buf, class_name, class_name_len);
 			#endif
@@ -714,7 +715,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				// other objects				
 				smart_str_appendl_fixed(&params->buf, "<objectType>");
 			#if PHP_VERSION_ID >= 70000
-				smart_string_appendl(&params->buf, class_name, class_name_len);
+				smart_string_appendl(&params->buf, class_name->val, class_name->len);
 			#else
 				smart_str_appendl(&params->buf, class_name, class_name_len);
 			#endif
@@ -724,7 +725,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_object_property, 1, params);
 			}
 			
+			#if PHP_VERSION_ID < 70000
 			efree((char*)class_name);
+			#else
+			zend_string_release(class_name);
+			#endif
 
 			break;
 
