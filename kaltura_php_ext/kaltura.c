@@ -650,8 +650,8 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				ZEND_HASH_DEC_APPLY_COUNT(myht);
 			#else
 				zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_map_element, 1, params);
-				break;
 			#endif
+				break;
 			}
 			
 			// handle KalturaTypedArray
@@ -680,8 +680,8 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				ZEND_HASH_DEC_APPLY_COUNT(myht);
 			#else
 				zend_hash_apply_with_argument(myht TSRMLS_CC, (apply_func_arg_t) kaltura_serialize_xml_array_element, params);
-				break;
 			##endif
+				break;
 			}
 
 			// get the class name
