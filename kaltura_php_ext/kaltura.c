@@ -200,19 +200,23 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 	return ZEND_HASH_APPLY_KEEP;
 }
 
+#if (PHP_VERSION_ID >= 70000)
+static int kaltura_serialize_xml_object_property(zval *zv_nptr, zend_ulong index_key, zend_string *hash_key, serialize_params_t* params)
+{
+	zval **zv = &zv_nptr;
+	const char *prop_name, *class_name;
+#else
 static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_args, va_list args, zend_hash_key *hash_key)
 {
-#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
 	char *prop_name, *class_name;
-#else
-	const char *prop_name, *class_name;
-#endif
 	serialize_params_t* params = va_arg(args, serialize_params_t*);
+#endif
+
 	int prop_name_len = 0;
 	int mangled;
 
 #if (PHP_VERSION_ID >= 70000)
-	if (hash_key->key == NULL)
+	if (hash_key == NULL)
 #else
 	if (hash_key->nKeyLength == 0)
 #endif
@@ -223,13 +227,9 @@ static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_ar
 
 #if (PHP_VERSION_ID >= 70000)
 	size_t key_len;
-	mangled = zend_unmangle_property_name_ex(hash_key->key, &class_name, &prop_name, &key_len);
+	mangled = zend_unmangle_property_name_ex(hash_key, &class_name, &prop_name, &key_len);
 #else
-	#if (PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION <= 3) || (PHP_MAJOR_VERSION < 5)
 	mangled = zend_unmangle_property_name(hash_key->arKey, hash_key->nKeyLength - 1, &class_name, &prop_name);
-	#else
-	mangled = zend_unmangle_property_name_ex(hash_key->arKey, hash_key->nKeyLength - 1, &class_name, &prop_name, &prop_name_len);
-	#endif
 #endif
 	if (class_name && mangled == SUCCESS)
 		return ZEND_HASH_APPLY_KEEP;		// private or protected (class_name == '*')
@@ -706,7 +706,16 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				smart_str_appendl_fixed(&params->buf, "</objectType>");
 				
 				myht = Z_OBJPROP_P(*arg);
+				
+				#if PHP_VERSION_ID >= 70000
+				ZEND_HASH_INC_APPLY_COUNT(myht);
+				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
+					kaltura_serialize_xml_object_property(val,num,key,params);
+				} ZEND_HASH_FOREACH_END();
+				ZEND_HASH_DEC_APPLY_COUNT(myht);
+				#else
 				zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_object_property, 1, params);
+				#endif
 			}
 			
 			zend_string_release(class_name);
