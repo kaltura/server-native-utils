@@ -141,7 +141,7 @@ static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_arg
 	smart_str_appendl_fixed(&params->buf, "<item><objectType>KalturaApiExceptionArg</objectType><name>");
 	
 #if (PHP_VERSION_ID >= 70000)
-	smart_string_appendl(&params->buf, hash_key->val, hash_key->len - 1);
+	smart_string_appendl(&params->buf, hash_key->val, hash_key->len);
 #else
 	smart_string_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
 #endif
