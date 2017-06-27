@@ -120,18 +120,20 @@ PHP_FUNCTION(kaltura_serialize_xml)
 			RETURN_NULL();
         }
 }
-
-static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_args, va_list args, zend_hash_key *hash_key)
-{
-	serialize_params_t* params;
 	
 #if (PHP_VERSION_ID >= 70000)
+static int kaltura_serialize_xml_exception_args(zval *zv_nptr, zend_ulong index_key, zend_string *hash_key, serialize_params_t* params)
+{
+	zval **zv = &zv_nptr;
 	if (hash_key->key == NULL || Z_TYPE_P(*zv) != IS_STRING) // not a string key || not a string value
 #else
+static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_args, va_list args, zend_hash_key *hash_key)
+{
 	if (hash_key->nKeyLength == 0 || Z_TYPE_P(*zv) != IS_STRING) // not a string key || not a string value
 #endif
 		return ZEND_HASH_APPLY_KEEP;
-		
+
+	serialize_params_t* params;
 	params = va_arg(args, serialize_params_t*);
 	
 	smart_str_appendl_fixed(&params->buf, "<item><objectType>KalturaApiExceptionArg</objectType><name>");
@@ -681,7 +683,15 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 					myht = Z_ARRVAL_P(prop);
 
 					smart_str_appendl_fixed(&params->buf, "<args>");
+				#if PHP_VERSION_ID >= 70000
+					ZEND_HASH_INC_APPLY_COUNT(myht);
+					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
+						kaltura_serialize_xml_exception_args(val,num,key,params);
+					}  ZEND_HASH_FOREACH_END();
+					ZEND_HASH_DEC_APPLY_COUNT(myht);
+				#else
 					zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_exception_args, 1, params);
+				#endif
 					smart_str_appendl_fixed(&params->buf, "</args>");
 				}
 				smart_str_appendl_fixed(&params->buf, "</error>");
