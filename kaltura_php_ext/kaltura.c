@@ -135,11 +135,12 @@ static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_arg
 
 #if (PHP_VERSION_ID >= 70000)
 static int kaltura_serialize_xml_array_element(zval *zv_nptr, void *argument TSRMLS_DC)
-zval **zv = &zv_nptr;
+{
+	zval **zv = &zv_nptr;
 #else
 static int kaltura_serialize_xml_array_element(zval **zv, void *argument TSRMLS_DC)
-#endif
 {
+#endif
 	serialize_params_t* params = (serialize_params_t*)argument;
 	
 	smart_str_appendl_fixed(&params->buf, "<item>");
@@ -646,7 +647,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				ZEND_HASH_INC_APPLY_COUNT(myht);
 				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
 					kaltura_serialize_xml_array_element(val,params);
-				}
+				} ZEND_HASH_FOREACH_END();
 				ZEND_HASH_DEC_APPLY_COUNT(myht);
 			#else
 				zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_map_element, 1, params);
@@ -676,11 +677,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				ZEND_HASH_INC_APPLY_COUNT(myht);
 				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
 					kaltura_serialize_xml_array_element(val,params);
-				}
+				} ZEND_HASH_FOREACH_END();
 				ZEND_HASH_DEC_APPLY_COUNT(myht);
 			#else
 				zend_hash_apply_with_argument(myht TSRMLS_CC, (apply_func_arg_t) kaltura_serialize_xml_array_element, params);
-			##endif
+			#endif
 				break;
 			}
 
