@@ -13,43 +13,56 @@
 
 
 #if (PHP_VERSION_ID >= 70000)
-#define smart_str_appendl_fixed(dest, src) \
-   	smart_string_appendl((dest), (src), sizeof(src) - 1);
+
+zval dummy;
+#define php_zend_read_property(scope, object, name, name_length, silent) \
+                zend_read_property(scope, object, name, name_length, silent, &dummy)
+
+static void write_string_xml_encoded(smart_string* buf, const char* str);
+static zend_class_entry *kaltura_typed_array_ce = NULL;
+static zend_class_entry *kaltura_associative_array_ce = NULL;
+
 #else
-#define smart_str_appendl_fixed(dest, src) \
-	smart_str_appendl_ex((dest), (src), sizeof(src) - 1, 0);
+
+#define php_zend_read_property(scope, object, name, name_length, silent) \
+                zend_read_property(scope, object, name, name_length, silent TSRMLS_CC)
+
+static void write_string_xml_encoded(smart_str* buf, const char* str);
+static zend_class_entry **kaltura_typed_array_ce = NULL;
+static zend_class_entry **kaltura_associative_array_ce = NULL;
+
+typedef smart_str smart_string;
+#define smart_string_appends smart_str_appends;
+#define smart_string_appendc smart_str_appendc;
+#define smart_string_appendl smart_str_appendl;
+#define smart_string_append_long smart_str_append_long;
+#define smart_string_appendl_ex smart_str_appendl_ex; 
+#define zend_string_release(s) efree((char*)s);;
+
 #endif
+
+typedef struct
+{
+	smart_string buf;
+	int ignore_null;
+} serialize_params_t;
+
+static int smart_str_append_double(smart_string* buf, double val)
+{
+	char temp_buf[MAX_LENGTH_OF_DOUBLE];
+	sprintf(temp_buf, "%.*G", (int) EG(precision), val);
+	smart_string_appends(buf, temp_buf);
+}
 
 ZEND_API zend_class_entry *zend_exception_get_default(TSRMLS_D);
 
-#if (PHP_VERSION_ID >= 70000)
-static void write_string_xml_encoded(smart_string* buf, const char* str);
-#else
-static void write_string_xml_encoded(smart_str* buf, const char* str);
-#endif
-
-#if (PHP_VERSION_ID >= 70000)
-static zend_class_entry *kaltura_typed_array_ce = NULL;
-static zend_class_entry *kaltura_associative_array_ce = NULL;
-#else
-static zend_class_entry **kaltura_typed_array_ce = NULL;
-static zend_class_entry **kaltura_associative_array_ce = NULL;
-#endif
+#define smart_str_appendl_fixed(dest, src) \
+   	smart_string_appendl_ex((dest), (src), sizeof(src) - 1, 0);
 
 static zend_function_entry kaltura_functions[] = {
     PHP_FE(kaltura_serialize_xml, NULL)
     {NULL, NULL, NULL}
 };
-
-typedef struct
-{
-#if (PHP_VERSION_ID >= 70000)
-	smart_string buf;
-#else
-	smart_str buf;
-#endif
-	int ignore_null;
-} serialize_params_t;
 
 static int kaltura_request_startup_func(INIT_FUNC_ARGS);
 
@@ -111,6 +124,7 @@ PHP_FUNCTION(kaltura_serialize_xml)
 static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_args, va_list args, zend_hash_key *hash_key)
 {
 	serialize_params_t* params;
+	
 #if (PHP_VERSION_ID >= 70000)
 	if (hash_key->key == NULL || Z_TYPE_P(*zv) != IS_STRING) // not a string key || not a string value
 #else
@@ -121,11 +135,13 @@ static int kaltura_serialize_xml_exception_args(zval **zv TSRMLS_DC, int num_arg
 	params = va_arg(args, serialize_params_t*);
 	
 	smart_str_appendl_fixed(&params->buf, "<item><objectType>KalturaApiExceptionArg</objectType><name>");
+	
 #if (PHP_VERSION_ID >= 70000)
 	smart_string_appendl(&params->buf, hash_key->key, hash_key->key->len - 1);
 #else
-	smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
+	smart_string_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
 #endif
+
 	smart_str_appendl_fixed(&params->buf, "</name><value>");
 	write_string_xml_encoded(&params->buf, Z_STRVAL_P(*zv));
 	smart_str_appendl_fixed(&params->buf, "</value></item>");
@@ -167,11 +183,11 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 #else
 	if (hash_key->nKeyLength > 0)
 	{		
-		smart_str_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
+		smart_string_appendl(&params->buf, hash_key->arKey, hash_key->nKeyLength - 1);
 	}
 	else
 	{
-		smart_str_append_long(&params->buf, hash_key->h);
+		smart_string_appendl(&params->buf, hash_key->h);
 	}
 #endif
 	smart_str_appendl_fixed(&params->buf, "</itemKey>");
@@ -216,28 +232,16 @@ static int kaltura_serialize_xml_object_property(zval **zv TSRMLS_DC, int num_ar
  
 	prop_name_len = strlen(prop_name);
 
-#if (PHP_VERSION_ID >= 70000)
 	smart_string_appendc(&params->buf, '<');
 	smart_string_appendl(&params->buf, prop_name, prop_name_len);
 	smart_string_appendc(&params->buf, '>');
-#else
-	smart_str_appendc(&params->buf, '<');
-	smart_str_appendl(&params->buf, prop_name, prop_name_len);
-	smart_str_appendc(&params->buf, '>');
-#endif
-
+	
 	kaltura_serialize_xml_internal(zv, params);
 
-#if (PHP_VERSION_ID >= 70000)
 	smart_str_appendl_fixed(&params->buf, "</");
 	smart_string_appendl(&params->buf, prop_name, prop_name_len);
 	smart_string_appendc(&params->buf, '>');
-#else
-	smart_str_appendl_fixed(&params->buf, "</");
-    smart_str_appendl(&params->buf, prop_name, prop_name_len);
-    smart_str_appendc(&params->buf, '>');
-#endif
-
+	
 	return ZEND_HASH_APPLY_KEEP;
 }
 
@@ -500,11 +504,7 @@ const char* xml_encode_table[256] = {
 	NULL,
 };
 
-#if (PHP_VERSION_ID >= 70000)
 static void write_string_xml_encoded(smart_string* buf, const char* str)
-#else
-static void write_string_xml_encoded(smart_str* buf, const char* str)
-#endif
 {
 	const char* chunkStart = str;
 	const char* escaped;
@@ -516,46 +516,19 @@ static void write_string_xml_encoded(smart_str* buf, const char* str)
 		if (escaped)
 		{
 			chunkSize = str - chunkStart;
-		#if (PHP_VERSION_ID >= 70000)
 			smart_string_appendl(buf, chunkStart, chunkSize);
-		#else
-			smart_str_appendl(buf, chunkStart, chunkSize);
-		#endif
 			chunkStart = str + 1;
-		#if (PHP_VERSION_ID >= 70000)
 			smart_string_appends(buf, escaped);
-		#else
-			smart_str_appends(buf, escaped);
-		#endif
 		}	
 	}
 	chunkSize = str - chunkStart;
-#if (PHP_VERSION_ID >= 70000)
 	smart_string_appendl(buf, chunkStart, chunkSize);
-#else
-	smart_str_appendl(buf, chunkStart, chunkSize);
-#endif
 }
 
 static int kaltura_request_startup_func(INIT_FUNC_ARGS)
 {
 	kaltura_typed_array_ce = NULL;
 	kaltura_associative_array_ce = NULL;
-}
-
-#if (PHP_VERSION_ID >= 70000)
-static int smart_str_append_double(smart_string* buf, double val)
-#else
-static int smart_str_append_double(smart_str* buf, double val)
-#endif
-{
-	char temp_buf[MAX_LENGTH_OF_DOUBLE];
-	sprintf(temp_buf, "%.*G", (int) EG(precision), val);
-#if (PHP_VERSION_ID >= 70000)
-	smart_string_appends(buf, temp_buf);
-#else
-	smart_str_appends(buf, temp_buf);
-#endif
 }
 
 PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* params) 
@@ -572,11 +545,6 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 	#else
 	char *class_name;
 	#endif
-#endif
-
-#if (PHP_VERSION_ID >= 70000)
-	zval dummy;
-#else
 	zend_uint class_name_len;
 #endif
 
@@ -592,20 +560,16 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 		case IS_BOOL:
 	
 			if (Z_LVAL_P(*arg))
-				smart_str_appendc(&params->buf, '1');
+				smart_string_appendc(&params->buf, '1');
 			else
-				smart_str_appendc(&params->buf, '0');
+				smart_string_appendc(&params->buf, '0');
 			break;
 	#endif
 		case IS_NULL:
 			break;
 			
 		case IS_LONG:
-		#if (PHP_VERSION_ID >= 70000)
 			smart_string_append_long(&params->buf, Z_LVAL_P(*arg));
-		#else
-			smart_str_append_long(&params->buf, Z_LVAL_P(*arg));
-		#endif
 			break;
 
 		case IS_DOUBLE:
@@ -633,21 +597,21 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				#endif
 			{
 				zval *arr;
+				
 				#if PHP_VERSION_ID >= 70000
 					arr = zend_read_property(kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
+					myht = Z_ARRVAL_P(arr);
+					ZEND_HASH_INC_APPLY_COUNT(myht);
+					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
+						kaltura_serialize_xml_array_element(val,params);
+					} ZEND_HASH_FOREACH_END();
+					ZEND_HASH_DEC_APPLY_COUNT(myht);
 				#else
 					arr = zend_read_property(*kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0 TSRMLS_CC);
+					myht = Z_ARRVAL_P(arr);
+					zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_map_element, 1, params);
 				#endif
-				myht = Z_ARRVAL_P(arr);
-			#if PHP_VERSION_ID >= 70000
-				ZEND_HASH_INC_APPLY_COUNT(myht);
-				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
-					kaltura_serialize_xml_array_element(val,params);
-				} ZEND_HASH_FOREACH_END();
-				ZEND_HASH_DEC_APPLY_COUNT(myht);
-			#else
-				zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_map_element, 1, params);
-			#endif
+				
 				break;
 			}
 			
@@ -662,22 +626,20 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				#endif				
 			{
 				zval *arr;
-				#if PHP_VERSION_ID >= 70000
-					arr = zend_read_property(kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
-				#else
-					arr = zend_read_property(*kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0 TSRMLS_CC);
-				#endif
-				myht = Z_ARRVAL_P(arr);
 				
-			#if PHP_VERSION_ID >= 70000
-				ZEND_HASH_INC_APPLY_COUNT(myht);
-				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
-					kaltura_serialize_xml_array_element(val,params);
-				} ZEND_HASH_FOREACH_END();
-				ZEND_HASH_DEC_APPLY_COUNT(myht);
-			#else
-				zend_hash_apply_with_argument(myht TSRMLS_CC, (apply_func_arg_t) kaltura_serialize_xml_array_element, params);
-			#endif
+				#if PHP_VERSION_ID >= 70000
+					arr = php_zend_read_property(kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0);
+					myht = Z_ARRVAL_P(arr);
+					ZEND_HASH_INC_APPLY_COUNT(myht);
+    				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
+    					kaltura_serialize_xml_array_element(val,params);
+    				} ZEND_HASH_FOREACH_END();
+    				ZEND_HASH_DEC_APPLY_COUNT(myht);
+				#else
+					arr = php_zend_read_property(*kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0);
+					myht = Z_ARRVAL_P(arr);
+					zend_hash_apply_with_argument(myht TSRMLS_CC, (apply_func_arg_t) kaltura_serialize_xml_array_element, params);
+				#endif
 				break;
 			}
 
@@ -700,32 +662,20 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				zval *prop;
 			
 				smart_str_appendl_fixed(&params->buf, "<error><objectType>");
-			#if PHP_VERSION_ID >= 70000
 				smart_string_appendl(&params->buf, class_name->val, class_name->len);
-			#else
-				smart_str_appendl(&params->buf, class_name, class_name_len);
-			#endif
 				smart_str_appendl_fixed(&params->buf, "</objectType><code>");
-				#if PHP_VERSION_ID >= 70000
-					prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0, &dummy);
-				#else
-					prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0 TSRMLS_CC);
-				#endif
+				
+				prop = php_zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0);
+				
 				kaltura_serialize_xml_internal(&prop, params);
 				smart_str_appendl_fixed(&params->buf, "</code><message>");
-				#if PHP_VERSION_ID >= 70000
-					prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "message", sizeof("message") - 1, 0, &dummy);
-				#else
-					prop = zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "message", sizeof("message") - 1, 0 TSRMLS_CC);
-				#endif
+				
+				prop = php_zend_read_property(zend_exception_get_default(TSRMLS_C), *arg, "message", sizeof("message") - 1, 0);
+				
 				kaltura_serialize_xml_internal(&prop, params);
 				smart_str_appendl_fixed(&params->buf, "</message>");
 				
-				#if PHP_VERSION_ID >= 70000
-					prop = zend_read_property(Z_OBJCE_P(*arg), *arg, "args", sizeof("args") - 1, 1, &dummy);		// if the property is missing, ignore silently
-				#else
-					prop = zend_read_property(Z_OBJCE_P(*arg), *arg, "args", sizeof("args") - 1, 1 TSRMLS_CC);		// if the property is missing, ignore silently
-				#endif
+				prop = php_zend_read_property(Z_OBJCE_P(*arg), *arg, "args", sizeof("args") - 1, 1);		// if the property is missing, ignore silently
 				if (prop != NULL && Z_TYPE_P(prop) == IS_ARRAY)
 				{
 					myht = Z_ARRVAL_P(prop);
@@ -740,23 +690,14 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			{
 				// other objects				
 				smart_str_appendl_fixed(&params->buf, "<objectType>");
-			#if PHP_VERSION_ID >= 70000
 				smart_string_appendl(&params->buf, class_name->val, class_name->len);
-			#else
-				smart_str_appendl(&params->buf, class_name, class_name_len);
-			#endif
 				smart_str_appendl_fixed(&params->buf, "</objectType>");
 				
 				myht = Z_OBJPROP_P(*arg);
 				zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_object_property, 1, params);
 			}
 			
-			#if PHP_VERSION_ID < 70000
-			efree((char*)class_name);
-			#else
 			zend_string_release(class_name);
-			#endif
-
 			break;
 
 		case IS_RESOURCE:
