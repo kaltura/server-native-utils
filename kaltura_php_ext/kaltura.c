@@ -583,24 +583,20 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 	switch (Z_TYPE_P(*arg)) {
 	#if (PHP_VERSION_ID >= 70000)
 		case IS_TRUE:
+			smart_string_appendc(&params->buf, '1');
+			break;
 		case IS_FALSE:
+			smart_string_appendc(&params->buf, '0');
+			break;
 	#else
 		case IS_BOOL:
-	#endif
+	
 			if (Z_LVAL_P(*arg))
-			#if (PHP_VERSION_ID >= 70000)
-            	smart_string_appendc(&params->buf, '1');
-            #else
-            	smart_str_appendc(&params->buf, '1');
-            #endif
+				smart_str_appendc(&params->buf, '1');
 			else
-			#if (PHP_VERSION_ID >= 70000)
-				smart_string_appendc(&params->buf, '0');
-			#else
 				smart_str_appendc(&params->buf, '0');
-			#endif
 			break;
-
+	#endif
 		case IS_NULL:
 			break;
 			
