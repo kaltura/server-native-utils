@@ -138,8 +138,8 @@ static int kaltura_serialize_xml_array_element(zval *zv_nptr, void *argument TSR
 zval **zv = &zv_nptr;
 #else
 static int kaltura_serialize_xml_array_element(zval **zv, void *argument TSRMLS_DC)
-{
 #endif
+{
 	serialize_params_t* params = (serialize_params_t*)argument;
 	
 	smart_str_appendl_fixed(&params->buf, "<item>");
