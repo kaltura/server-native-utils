@@ -37,7 +37,7 @@ typedef smart_str smart_string;
 #define smart_string_appendl smart_str_appendl;
 #define smart_string_append_long smart_str_append_long;
 #define smart_string_appendl_ex smart_str_appendl_ex; 
-#define zend_string_release(s) efree((char*)s);;
+#define zend_string_release(s) efree((char*)s);
 
 #endif
 
@@ -169,20 +169,22 @@ static int kaltura_serialize_xml_array_element(zval **zv, void *argument TSRMLS_
 	return ZEND_HASH_APPLY_KEEP;
 }
 
+#if (PHP_VERSION_ID >= 70000)
+static int kaltura_serialize_xml_map_element(zval *zv_nptr, zend_ulong index_key, zend_string *hash_key, serialize_params_t* params)
+{
+	zval **zv = &zv_nptr;
+#else
 static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, va_list args, zend_hash_key *hash_key)
 {
 	serialize_params_t* params = va_arg(args, serialize_params_t*);
+#endif
 	
 	smart_str_appendl_fixed(&params->buf, "<item><itemKey>");
 
 #if (PHP_VERSION_ID >= 70000)
-	if (hash_key->key != NULL)
+	if (hash_key != NULL && Z_TYPE_P(*zv) == IS_STRING)
     {		
-    	smart_string_appendl(&params->buf, hash_key->key, hash_key->key->len - 1);
-    }
-    else
-    {
-    	smart_string_append_long(&params->buf, hash_key->h);
+    	smart_string_appendl(&params->buf, hash_key->val, hash_key->len);
     }
 #else
 	if (hash_key->nKeyLength > 0)
@@ -607,7 +609,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 					myht = Z_ARRVAL_P(arr);
 					ZEND_HASH_INC_APPLY_COUNT(myht);
 					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
-						kaltura_serialize_xml_array_element(val,params);
+						kaltura_serialize_xml_map_element(val,num,key,params);
 					} ZEND_HASH_FOREACH_END();
 					ZEND_HASH_DEC_APPLY_COUNT(myht);
 				#else
