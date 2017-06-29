@@ -182,10 +182,14 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 	smart_str_appendl_fixed(&params->buf, "<item><itemKey>");
 
 #if (PHP_VERSION_ID >= 70000)
-	if (hash_key != NULL && Z_TYPE_P(*zv) == IS_STRING)
-    {		
-    	smart_string_appendl(&params->buf, hash_key->val, hash_key->len);
-    }
+	if (hash_key != NULL)
+	{		
+		smart_string_appendl(&params->buf, hash_key->val, hash_key->len);
+	}
+	else
+	{
+		smart_string_append_long(&params->buf, hash_key->h);
+	}
 #else
 	if (hash_key->nKeyLength > 0)
 	{		
