@@ -618,6 +618,9 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				
 				#if PHP_VERSION_ID >= 70000
 					arr = php_zend_read_property(kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0);
+					if (Z_ISREF_P(arr)) {
+						ZVAL_UNREF(arr);
+					}
 					myht = Z_ARRVAL_P(arr);
 					ZEND_HASH_INC_APPLY_COUNT(myht);
 					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
@@ -647,6 +650,9 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				
 				#if PHP_VERSION_ID >= 70000
 					arr = php_zend_read_property(kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0);
+					if (Z_ISREF_P(arr)) {
+						ZVAL_UNREF(arr);
+					}
 					myht = Z_ARRVAL_P(arr);
 					ZEND_HASH_INC_APPLY_COUNT(myht);
 					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
