@@ -183,12 +183,12 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 
 #if (PHP_VERSION_ID >= 70000)
 	if (hash_key != NULL)
-	{		
+	{
 		smart_string_appendl(&params->buf, hash_key->val, hash_key->len);
 	}
-	else
+	else // hash_key is numeric
 	{
-		smart_string_append_long(&params->buf, hash_key->h);
+		smart_string_append_long(&params->buf, index_key);
 	}
 #else
 	if (hash_key->nKeyLength > 0)
@@ -592,7 +592,15 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 	
 		case IS_ARRAY:
 			myht = Z_ARRVAL_P(*arg);
+		#if PHP_VERSION_ID >= 70000
+			ZEND_HASH_INC_APPLY_COUNT(myht);
+			ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
+				kaltura_serialize_xml_array_element(val,params);
+			} ZEND_HASH_FOREACH_END();
+			ZEND_HASH_DEC_APPLY_COUNT(myht);
+		#else
 			zend_hash_apply_with_argument(myht TSRMLS_CC, (apply_func_arg_t) kaltura_serialize_xml_array_element, params);
+		#endif
 			break;
 
 		case IS_OBJECT:
@@ -609,7 +617,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				zval *arr;
 				
 				#if PHP_VERSION_ID >= 70000
-					arr = zend_read_property(kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0, &dummy);
+					arr = php_zend_read_property(kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0);
 					myht = Z_ARRVAL_P(arr);
 					ZEND_HASH_INC_APPLY_COUNT(myht);
 					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
@@ -617,7 +625,7 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 					} ZEND_HASH_FOREACH_END();
 					ZEND_HASH_DEC_APPLY_COUNT(myht);
 				#else
-					arr = zend_read_property(*kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0 TSRMLS_CC);
+					arr = php_zend_read_property(*kaltura_associative_array_ce, *arg, "array", sizeof("array") - 1, 0);
 					myht = Z_ARRVAL_P(arr);
 					zend_hash_apply_with_arguments(myht TSRMLS_CC, (apply_func_args_t) kaltura_serialize_xml_map_element, 1, params);
 				#endif
@@ -641,10 +649,10 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 					arr = php_zend_read_property(kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0);
 					myht = Z_ARRVAL_P(arr);
 					ZEND_HASH_INC_APPLY_COUNT(myht);
-    				ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
-    					kaltura_serialize_xml_array_element(val,params);
-    				} ZEND_HASH_FOREACH_END();
-    				ZEND_HASH_DEC_APPLY_COUNT(myht);
+					ZEND_HASH_FOREACH_KEY_VAL_IND(myht, num, key, val) {
+						kaltura_serialize_xml_array_element(val,params);
+					} ZEND_HASH_FOREACH_END();
+					ZEND_HASH_DEC_APPLY_COUNT(myht);
 				#else
 					arr = php_zend_read_property(*kaltura_typed_array_ce, *arg, "array", sizeof("array") - 1, 0);
 					myht = Z_ARRVAL_P(arr);
