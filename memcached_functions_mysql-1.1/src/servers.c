@@ -244,7 +244,9 @@ my_bool memc_servers_behavior_set_init(__attribute__ ((unused)) UDF_INIT *initid
     check for the other non 1|0 behaviors
   */
   if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_SUPPORT_CAS") ||
+      ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_BINARY_PROTOCOL") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NO_BLOCK") ||
+      ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NOREPLY") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_BUFFER_REQUESTS") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_USER_DATA") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_SORT_HOSTS") ||
@@ -347,6 +349,10 @@ long long memc_servers_behavior_set(__attribute__ ((unused)) UDF_INIT *initid,
   else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NO_BLOCK"))
   {
     behavior= MEMCACHED_BEHAVIOR_NO_BLOCK;
+  }
+  else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NOREPLY"))
+  {
+    behavior= MEMCACHED_BEHAVIOR_NOREPLY;
   }
   else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_TCP_NODELAY"))
   {
@@ -582,7 +588,9 @@ my_bool memc_servers_behavior_get_init(__attribute__ ((unused)) UDF_INIT *initid
 
   /* make sure valid behavior */
   if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_SUPPORT_CAS") ||
+      ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_BINARY_PROTOCOL") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NO_BLOCK") ||
+      ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NOREPLY") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_POLL_TIMEOUT") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_CONNECT_TIMEOUT") ||
       ! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_RETRY_TIMEOUT") ||
@@ -633,6 +641,8 @@ char *memc_servers_behavior_get(__attribute__ ((unused)) UDF_INIT *initid,
     behavior= MEMCACHED_BEHAVIOR_SUPPORT_CAS;
   else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NO_BLOCK"))
     behavior= MEMCACHED_BEHAVIOR_NO_BLOCK;
+  else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_NOREPLY"))
+    behavior= MEMCACHED_BEHAVIOR_NOREPLY;
   else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_TCP_NODELAY"))
     behavior= MEMCACHED_BEHAVIOR_TCP_NODELAY;
   else if (! strcasecmp(args->args[0], "MEMCACHED_BEHAVIOR_HASH"))
