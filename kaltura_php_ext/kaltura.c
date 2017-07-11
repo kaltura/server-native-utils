@@ -37,7 +37,6 @@ typedef smart_str smart_string;
 #define smart_string_appendl smart_str_appendl;
 #define smart_string_append_long smart_str_append_long;
 #define smart_string_appendl_ex smart_str_appendl_ex; 
-#define zend_string_release(s) efree((char*)s);
 
 #endif
 
@@ -739,7 +738,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				#endif
 			}
 			
+			#if PHP_VERSION_ID >= 70000
 			zend_string_release(class_name);
+			#else
+			efree(class_name);
+			#endif
 			break;
 
 		case IS_RESOURCE:
