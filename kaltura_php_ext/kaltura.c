@@ -30,13 +30,13 @@ static zend_class_entry *kaltura_associative_array_ce = NULL;
 static void write_string_xml_encoded(smart_str* buf, const char* str);
 static zend_class_entry **kaltura_typed_array_ce = NULL;
 static zend_class_entry **kaltura_associative_array_ce = NULL;
-
 typedef smart_str smart_string;
-#define smart_string_appends smart_str_appends;
-#define smart_string_appendc smart_str_appendc;
-#define smart_string_appendl smart_str_appendl;
-#define smart_string_append_long smart_str_append_long;
-#define smart_string_appendl_ex smart_str_appendl_ex; 
+
+#define smart_string_appends smart_str_appends
+#define smart_string_appendc smart_str_appendc
+#define smart_string_appendl smart_str_appendl
+#define smart_string_append_long smart_str_append_long
+#define smart_string_appendl_ex smart_str_appendl_ex 
 
 #endif
 
@@ -56,7 +56,7 @@ static int smart_str_append_double(smart_string* buf, double val)
 ZEND_API zend_class_entry *zend_exception_get_default(TSRMLS_D);
 
 #define smart_str_appendl_fixed(dest, src) \
-   	smart_string_appendl_ex((dest), (src), sizeof(src) - 1, 0);
+   	smart_string_appendl_ex((dest), (src), sizeof(src) - 1, 0)
 
 static zend_function_entry kaltura_functions[] = {
     PHP_FE(kaltura_serialize_xml, NULL)
@@ -197,7 +197,7 @@ static int kaltura_serialize_xml_map_element(zval **zv TSRMLS_DC, int num_args, 
 	}
 	else
 	{
-		smart_string_appendl(&params->buf, hash_key->h);
+		smart_string_append_long(&params->buf, hash_key->h);
 	}
 #endif
 	smart_str_appendl_fixed(&params->buf, "</itemKey>");
@@ -686,7 +686,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				zval *prop;
 			
 				smart_str_appendl_fixed(&params->buf, "<error><objectType>");
+				#if PHP_VERSION_ID >= 70000
 				smart_string_appendl(&params->buf, class_name->val, class_name->len);
+				#else
+				smart_string_appendl(&params->buf, class_name, class_name_len);
+				#endif
 				smart_str_appendl_fixed(&params->buf, "</objectType><code>");
 				
 				prop = zend_read_property_wrapper(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0);
@@ -722,7 +726,11 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 			{
 				// other objects				
 				smart_str_appendl_fixed(&params->buf, "<objectType>");
-				smart_string_appendl(&params->buf, class_name->val, class_name->len);
+				#if PHP_VERSION_ID >= 70000
+                smart_string_appendl(&params->buf, class_name->val, class_name->len);
+                #else
+                smart_string_appendl(&params->buf, class_name, class_name_len);
+                #endif
 				smart_str_appendl_fixed(&params->buf, "</objectType>");
 				
 				myht = Z_OBJPROP_P(*arg);
