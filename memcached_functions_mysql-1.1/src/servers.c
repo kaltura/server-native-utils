@@ -146,9 +146,15 @@ long long memc_servers_set(__attribute__ ((unused)) UDF_INIT *initid,
   */
   memcached_version(master_memc);
 
+#if (LIBMEMCACHED_VERSION_HEX >= 0x01000009)
+  version=  memcached_server_major_version(master_memc->servers) * 100 +
+            memcached_server_minor_version(master_memc->servers) * 10 +
+            memcached_server_micro_version(master_memc->servers);
+#else
   version=  master_memc->servers[0].major_version * 100 +
             master_memc->servers[0].minor_version * 10 +
             master_memc->servers[0].micro_version;
+#endif
 
   if (version >= 124)
     memcached_behavior_set(master_memc, MEMCACHED_BEHAVIOR_SUPPORT_CAS, set);
