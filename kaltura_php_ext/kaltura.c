@@ -7,10 +7,10 @@
 
 #if (PHP_VERSION_ID < 70000)
 #include "php_smart_str.h"
-#include "/php_versions/php_5.h"
+#include "php_versions/php_5.h"
 #else
 #include "ext/standard/php_smart_string.h"
-#include "/php_versions/php_7.h"
+#include "php_versions/php_7.h"
 zval dummy;
 #endif
 
