@@ -122,11 +122,18 @@ file_writer_thread(void* context)
 
 		if (output_fd == -1)
 		{
-			output_fd = open(state->output_filename, O_CREAT | O_WRONLY | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-			if (output_fd == -1)
+			if (strcmp(state->output_filename, ".gz") == 0)
 			{
-				log_print("file_writer_thread: open failed %d", errno);
-				goto error;
+				output_fd = STDOUT_FILENO;
+			}
+			else
+			{
+				output_fd = open(state->output_filename, O_CREAT | O_WRONLY | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+				if (output_fd == -1)
+				{
+					log_print("file_writer_thread: open failed %d", errno);
+					goto error;
+				}
 			}
 		}
 				
@@ -141,8 +148,11 @@ file_writer_thread(void* context)
 		
 		if ((input_buffer.flags & FLAG_FLUSH_MASK) != 0)
 		{
-			close(output_fd);
-			output_fd = -1;
+			if (output_fd != STDOUT_FILENO)
+			{
+				close(output_fd);
+				output_fd = -1;
+			}
 			
 			if ((input_buffer.flags & FLAG_SHUTDOWN) != 0)
 			{
@@ -636,13 +646,18 @@ init_pipe(state_t* state, const char* path, const char* owner)
 static bool_t
 init_file(state_t* state, const char* path)
 {
-	log_print("init_file: opening %s", path);
-
-	state->input_fd = open(path, O_RDONLY);
-	if (state->input_fd == -1)
+	if (path[0] == 0)
 	{
-		log_print("init_file: open input file failed %d", errno);
-		return FALSE;
+		state->input_fd = STDIN_FILENO;
+	}
+	else
+	{
+		state->input_fd = open(path, O_RDONLY);
+		if (state->input_fd == -1)
+		{
+			log_print("init_file: open input file failed %d", errno);
+			return FALSE;
+		}
 	}
 	
 	state->inotify_fd = -1;
@@ -840,8 +855,6 @@ file_mode_main(const char* path)
 		cur_tinfo++;
 	}
 	
-	log_print("main_thread: started");
-	
 	rc = sem_wait(&thread_error_sem);
 	if (rc != 0)
 	{
@@ -855,8 +868,6 @@ file_mode_main(const char* path)
 		{
 			pthread_join(tinfos[thread_index], NULL);
 		}
-		
-		log_print("main_thread: all threads finished");
 	}
 	else
 	{
@@ -985,6 +996,11 @@ int
 main(int argc, char *argv[])
 {
 	pid_t pid, sid;
+
+	if (argc == 1 && !isatty(STDOUT_FILENO))
+	{
+		return file_mode_main("") ? 0 : 1;
+	}
 
 	// validate args
 	if (argc < 3)
