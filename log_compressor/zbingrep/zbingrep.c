@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <pcre.h>
 #include <zlib.h>
+#include "../common.h"
 
 // macros
 #define min(x, y) (((x) < (y)) ? (x) : (y))
@@ -60,7 +61,6 @@ typedef void (*write_func_t)(void* context, const u_char* ptr, size_t size);
 
 // globals
 static int show_help = 0;
-static char* program_name;
 
 const char* file_name;
 static regex_t regex;
@@ -82,34 +82,6 @@ static struct option const long_options[] =
   {"help", no_argument, &show_help, 1},
   {0, 0, 0, 0}
 };
-
-static void 
-verror(int errnum, const char *message, va_list args)
-{
-	char const *s;
-	
-	fflush(stdout);
-
-	fprintf(stderr, "%s: ", program_name);
-	vfprintf(stderr, message, args);
-	if (errnum)
-	{
-		s = strerror (errnum);
-		fprintf (stderr, ": %s", s);		
-	}
-	putc('\n', stderr);
-	fflush(stderr);
-}
-
-void
-error(int errnum, const char *message, ...)
-{
-	va_list args;
-
-	va_start(args, message);
-	verror(errnum, message, args);
-	va_end(args);
-}
 
 static buffer_t*
 alloc_read_buffer()

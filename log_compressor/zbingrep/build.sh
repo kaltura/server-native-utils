@@ -1,1 +1,1 @@
-gcc -O2 -Wall -o zbingrep zbingrep.c -lz -lpcre
+gcc -O2 -Wall -o zbingrep zbingrep.c ../common.c -lz -lpcre
