@@ -6,9 +6,9 @@ This is unlike regular gzip files, which always have to be read from the beginni
 
 ## log_compressor
 
-Writes segmented-gzip files, has two working modes -
-* Daemon - read logs from a unix datagram socket / pipe (fifo), compresses them and writes to disk.
-* Offline - read logs from a file/stdin and write to a file/stdout (similar to the gzip utility)
+Writes segmented-gzip files, supports two working modes -
+* Daemon - reads logs from a unix datagram socket / pipe (fifo), compresses them and writes to disk.
+* Offline - reads logs from a file/stdin and write to a file/stdout (similar to the gzip utility)
 
 ## ztail
 

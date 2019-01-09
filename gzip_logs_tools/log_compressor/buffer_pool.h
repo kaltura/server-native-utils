@@ -2,7 +2,7 @@
 #define __BUFFER_POOL_H__
 
 // includes
-#include "common.h"
+#include "../common.h"
 
 // typedefs
 typedef struct list_node_s {

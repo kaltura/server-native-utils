@@ -3,7 +3,7 @@
 
 // includes
 #include <semaphore.h>
-#include "common.h"
+#include "../common.h"
 
 /*
 	ITP = Inter Thread Pipe
