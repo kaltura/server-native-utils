@@ -446,38 +446,51 @@ block_processor_append_data(block_processor_state_t* state, u_char* buffer, size
 		break;		// handled outside the switch
 	}
 	
-	if (state->cur_block_start == state->block_buffer)
-	{
-		// current block is kept in block buffer, copy as much as possible
-		copy_size = min(size, state->block_buffer + sizeof(state->block_buffer) - state->cur_block_end);
-		memcpy(state->cur_block_end, buffer, copy_size);
-		state->cur_block_end += copy_size;
-		
-		if (state->cur_block_end < state->block_buffer + sizeof(state->block_buffer))
-		{
-			return;
-		}
-		
-		// buffer is full, evaluate the block
-		if (block_processor_eval_filter(state))
-		{
-			fwrite(buffer + copy_size, size - copy_size, 1, stdout);
-		}
-	}
-	else if (state->cur_block_start == NULL)
+	if (state->cur_block_start == NULL)
 	{
 		// no data, just point to the provided buffer
 		state->cur_block_start = buffer;
 		state->cur_block_end = buffer + size;
+		return;
 	}
-	else if (state->cur_block_end == buffer)
+	
+	if (state->cur_block_end == buffer)
 	{
-		// extend the current buffer
+		// contiguous - extend the current buffer
 		state->cur_block_end += size;
+		return;
 	}
-	else
+	
+	if (state->cur_block_start != state->block_buffer)
 	{
-		error(0, "unexpected - non-contiguous block buffers");
+		// copy current block to the buffer
+		copy_size = state->cur_block_end - state->cur_block_start;
+		if (copy_size > sizeof(state->block_buffer))
+		{
+			// Note: this can't happen since the line buffer is smaller than the block buffer
+			error(0, "unexpected - not enough room in block buffer");
+			exit(1);
+		}
+			
+		memcpy(state->block_buffer, state->cur_block_start, copy_size);
+		state->cur_block_start = state->block_buffer;
+		state->cur_block_end = state->block_buffer + copy_size;
+	}
+	
+	// current block is kept in block buffer, copy as much as possible
+	copy_size = min(size, state->block_buffer + sizeof(state->block_buffer) - state->cur_block_end);
+	memcpy(state->cur_block_end, buffer, copy_size);
+	state->cur_block_end += copy_size;
+	
+	if (state->cur_block_end < state->block_buffer + sizeof(state->block_buffer))
+	{
+		return;
+	}
+	
+	// buffer is full, evaluate the block
+	if (block_processor_eval_filter(state))
+	{
+		fwrite(buffer + copy_size, size - copy_size, 1, stdout);
 	}
 }
 
