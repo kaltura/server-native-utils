@@ -407,10 +407,6 @@ process_file()
 	{
 		// process a segment
 		status = compressed_file_process_segment(&file_state, &line_processor_process, &lines_state);
-		if (status == PROCESS_ERROR)
-		{
-			break;
-		}
 
 		// print the segment info
 		cur_pos = compressed_file_get_pos(&file_state);
@@ -425,6 +421,9 @@ process_file()
 		{
 		case PROCESS_DONE:
 			result = 0;
+			// fallthrough
+
+		case PROCESS_ERROR:
 			goto done;
 
 		case PROCESS_SUCCESS:
