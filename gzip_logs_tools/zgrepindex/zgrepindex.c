@@ -12,6 +12,7 @@ typedef unsigned char u_char;
 #define MAX_LINE_SIZE (1024)
 #define MAX_CAPTURE_SIZE (1024)
 #define MIN_SEGMENT_SIZE (524288)		// TODO: add cmdline switch
+#define MAX_CAPTURES (9)	// $1..$9
 
 // enum
 enum { 
@@ -24,7 +25,7 @@ typedef struct {
 	u_char line_buffer[MAX_LINE_SIZE];
 	size_t line_buffer_size;
 	bool_t line_start;
-	
+
 	// captures (null terminated)
 	u_char last_value[MAX_CAPTURE_SIZE];
 	size_t last_value_size;
@@ -39,12 +40,19 @@ typedef struct {
 	pcre_extra *extra;
 } regex_t;
 
+typedef struct {
+	int capture_index;
+	const u_char* data;
+	size_t len;
+} capture_expression_t;
+
 // constants
-static char const short_options[] = "p:t:";
+static char const short_options[] = "p:t:c:";
 static struct option const long_options[] =
 {
 	{"pattern", required_argument, NULL, 'p'},
 	{"time-format", required_argument, NULL, 't'},
+	{"capture-expression", required_argument, NULL, 'c'},
 	{0, 0, 0, 0}
 };
 
@@ -53,6 +61,10 @@ static int show_help = 0;
 static const char* file_name;
 static const char* time_format = NULL;
 static regex_t regex;
+
+static capture_expression_t* capture_expression = NULL;
+static capture_expression_t default_capture_expression[2];
+static int max_capture_index;
 
 static void
 usage(int status)
@@ -76,12 +88,118 @@ Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' input.log.gz\n\
   -p, --pattern             a regular expression that captures a timestamp\
                             from an input line.\n\
                             the default pattern is (.*)\n\
+  -c, --capture-expression  an expression that is evaluated to get the\n\
+                            timestamp of a given line. the default expression\n\
+                            is '$1', meaning the first pattern capture.\n\
   -t, --time-format         parse the pattern match using the specified\n\
                             strptime format. when not provided, string\n\
                             comparison is used to compare timestamps\n\
 ");
 	}
 	exit(status);
+}
+
+static bool_t
+parse_capture_expression(const char* str)
+{
+	capture_expression_t* cur;
+	const char* next;
+	const char* pos;
+	int count;
+
+	count = 0;
+	for (pos = str; *pos; pos++)
+	{
+		if (*pos == '$')
+		{
+			count++;
+		}
+	}
+
+	capture_expression = malloc(sizeof(capture_expression[0]) * (count + 1));
+	if (capture_expression == NULL)
+	{
+		error(0, "malloc failed");
+		return FALSE;
+	}
+
+	max_capture_index = -1;
+	cur = capture_expression;
+	pos = str;
+	for (;;)
+	{
+		next = strchr(pos, '$');
+		if (next == NULL)
+		{
+			cur->capture_index = -1;
+			cur->data = (const u_char*)pos;
+			cur->len = strlen(pos);
+			break;
+		}
+
+		next++;
+		if (*next < '1' || *next > '9')
+		{
+			error(0, "expected capture index in capture condition");
+			free(capture_expression);
+			capture_expression = NULL;
+			return FALSE;
+		}
+		cur->capture_index = *next++ - '1';
+		cur->data = (const u_char*)pos;
+		cur->len = (next - 2) - pos;
+		cur++;
+
+		if (cur->capture_index > max_capture_index)
+		{
+			max_capture_index = cur->capture_index;
+		}
+
+		pos = next;
+	}
+
+	return TRUE;
+}
+
+static size_t
+eval_capture_expression(u_char* dest, size_t dest_size, const u_char* buffer, int* captures)
+{
+	capture_expression_t* cur;
+	const u_char* value;
+	u_char* initial_dest = dest;
+	u_char* dest_end;
+	size_t value_len;
+	size_t copy_size;
+	int value_start;
+
+	// Note: assuming dest_size > 0
+	dest_end = dest + dest_size - 1;	// leave room for null
+
+	for (cur = capture_expression; ; cur++)
+	{
+		// copy the fixed string
+		copy_size = min(dest_end - dest, cur->len);
+		memcpy(dest, cur->data, copy_size);
+		dest += copy_size;
+
+		if (cur->capture_index < 0)
+		{
+			break;
+		}
+
+		// copy the capture value
+		value_start = captures[(cur->capture_index + 1) * 2];
+		value_len = captures[(cur->capture_index + 1) * 2 + 1] - value_start;
+		value = buffer + value_start;
+
+		copy_size = min(dest_end - dest, value_len);
+		memcpy(dest, value, value_len);
+		dest += value_len;
+	}
+
+	*dest = '\0';
+
+	return dest - initial_dest;
 }
 
 static int 
@@ -99,6 +217,7 @@ compare_timestamps(const void *s1, size_t n1, const void *s2, size_t n2)
 	}
 	else 
 	{
+		tm.tm_isdst = 0;		// not set by strptime
 		t1 = mktime(&tm);
 	}
 
@@ -109,9 +228,10 @@ compare_timestamps(const void *s1, size_t n1, const void *s2, size_t n2)
 	}
 	else
 	{
+		tm.tm_isdst = 0;		// not set by strptime
 		t2 = mktime(&tm);
 	}
-	
+
 	return (int)t1 - (int)t2;
 }
 
@@ -122,7 +242,7 @@ compare_matches(const void *s1, size_t n1, const void *s2, size_t n2)
 	{
 		return compare_timestamps(s1, n1, s2, n2);
 	}
-	
+
 	return memcmp(s1, s2, min(n1, n2));
 }
 
@@ -168,14 +288,15 @@ line_processor_process(void* context, u_char* pos, size_t size)
 	u_char* end;
 	u_char* line_buffer;
 	size_t line_size;
-	int captures[6];
-	
+	int captures[(1 + MAX_CAPTURES) * 3];
+	int exec_result;
+
 	for (end = pos + size; pos < end; pos = cur_end)
 	{
 		// find a newline
 		newline = memchr(pos, '\n', end - pos);
 		cur_end = newline != NULL ? newline + 1 : end;
-		
+
 		if (!state->line_start)
 		{
 			// ignore all data until a newline is found
@@ -185,7 +306,7 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			}
 			continue;
 		}
-		
+
 		if (state->line_buffer_size > 0 || 
 			(newline == NULL && cur_end - pos < sizeof(state->line_buffer)))
 		{
@@ -207,7 +328,7 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			// after processing the buffer, ignore all data until a newline
 			state->line_start = FALSE;
 		}
-		
+
 		// match the line against the regex
 		if (state->line_buffer_size > 0)
 		{
@@ -220,8 +341,8 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			line_buffer = pos;
 			line_size = cur_end - pos;
 		}
-		
-		if (pcre_exec(
+
+		exec_result = pcre_exec(
 			regex.code, 
 			regex.extra, 
 			(const char *)line_buffer, 
@@ -229,20 +350,20 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			0, 
 			0, 
 			captures, 
-			sizeof(captures) / sizeof(captures[0])) < 2)
+			sizeof(captures) / sizeof(captures[0]));
+
+		if (exec_result < max_capture_index + 2)
 		{
 			// no match / some error
 			continue;
 		}
-	
+
 		// copy to last value
-		state->last_value_size = captures[3] - captures[2];
-		if (state->last_value_size > sizeof(state->last_value) - 1)
-		{
-			state->last_value_size = sizeof(state->last_value) - 1;
-		}
-		memcpy(state->last_value, line_buffer + captures[2], state->last_value_size);
-		state->last_value[state->last_value_size] = '\0';
+		state->last_value_size = eval_capture_expression(
+			state->last_value, 
+			sizeof(state->last_value), 
+			line_buffer, 
+			captures);
 
 		// update min/max value
 		if (state->min_value_size == 0 ||
@@ -311,7 +432,7 @@ process_file()
 			line_processor_next_segment(&lines_state);
 			segment_start = cur_pos;
 			continue;
-			
+
 		case PROCESS_RESYNC:
 			break;		// handled outside the switch
 		}
@@ -359,7 +480,14 @@ main(int argc, char **argv)
 			case 'p':
 				pattern = optarg;
 				break;
-				
+
+			case 'c':
+				if (!parse_capture_expression(optarg))
+				{
+					return EXIT_ERROR;
+				}
+				break;
+
 			case 't':
 				time_format = optarg;
 				break;
@@ -367,7 +495,7 @@ main(int argc, char **argv)
 			case 0:
 				// long options
 				break;
-				
+
 			default:
 				usage(EXIT_ERROR);
 				break;
@@ -382,6 +510,14 @@ main(int argc, char **argv)
 	if (optind + 1 > argc)
     {
 		usage(EXIT_SUCCESS);
+	}
+
+	if (capture_expression == NULL)
+	{
+		capture_expression = default_capture_expression;
+		memset(default_capture_expression, 0, sizeof(default_capture_expression));
+		default_capture_expression[1].capture_index = -1;
+		max_capture_index = 0;
 	}
 
 	// initialize the regex
@@ -405,7 +541,7 @@ main(int argc, char **argv)
 	{
 		error(0, "pcre_study() failed: %s", errstr);
 	}
-	
+
 	// process the files
 	rc = 0;
 	while (optind < argc)
@@ -416,6 +552,6 @@ main(int argc, char **argv)
 			rc = 1;
 		}
 	}
-	
+
 	return rc;
 }
