@@ -138,14 +138,14 @@ parse_time(const char* str, size_t len, time_t* result)
 static int
 time_compare(capture_condition_t* cond, const char* str, size_t len)
 {
-	time_t t1;
+	time_t time;
 
-	if (!parse_time(str, len, &t1))
+	if (!parse_time(str, len, &time))
 	{
 		return -1;
 	}
 
-	return (int)t1 - (int)cond->u.time;
+	return (int)time - (int)cond->u.time;
 }
 
 static bool_t

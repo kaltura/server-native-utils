@@ -40,7 +40,7 @@ parse_capture_expression(
 		if (next == NULL)
 		{
 			cur->capture_index = -1;
-			cur->data = (const char*)pos;
+			cur->data = pos;
 			cur->len = end - pos;
 			break;
 		}
@@ -53,7 +53,7 @@ parse_capture_expression(
 			return NULL;
 		}
 		cur->capture_index = *next++ - '1';
-		cur->data = (const char*)pos;
+		cur->data = pos;
 		cur->len = (next - 2) - pos;
 		cur++;
 
@@ -105,8 +105,8 @@ eval_capture_expression(
 		value = buffer + value_start;
 
 		copy_size = min(dest_end - dest, value_len);
-		memcpy(dest, value, value_len);
-		dest += value_len;
+		memcpy(dest, value, copy_size);
+		dest += copy_size;
 	}
 
 	*dest = '\0';
