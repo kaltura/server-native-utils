@@ -1,1 +1,1 @@
-gcc -O2 -Wall -o zgrepindex zgrepindex.c ../compressed_file.c ../common.c -lz -lpcre
+gcc -O2 -Wall -o zgrepindex zgrepindex.c ../compressed_file.c ../capture_expression.c ../common.c -lz -lpcre
