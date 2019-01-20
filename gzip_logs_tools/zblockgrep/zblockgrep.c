@@ -1,11 +1,13 @@
+#define _XOPEN_SOURCE 700		// required for strptime
+typedef unsigned char u_char;
+
 #include <getopt.h>
 #include <string.h>
+#include <time.h>
 #include <pcre.h>
 #include "../compressed_file.h"
+#include "../capture_expression.h"
 #include "filter.h"
-
-// constants
-#define MAX_CAPTURES (9)	// $1..$9
 
 // enums
 enum {
@@ -31,12 +33,14 @@ static regex_t regex;
 static filter_base_t* filter = NULL;
 static char* block_delimiter = NULL;
 static size_t block_delimiter_len = 0;
+static const char* time_format = "%Y-%m-%d %H:%M:%S";
 
 // constants
-static char const short_options[] = "p:c:f:d:hH";
+static char const short_options[] = "p:t:c:f:d:hH";
 static struct option const long_options[] =
 {
 	{"pattern", required_argument, NULL, 'p'},
+	{"time-format", required_argument, NULL, 't'},
 	{"capture-conditions", required_argument, NULL, 'c'},
 	{"filter", required_argument, NULL, 'f'},
 	{"block-delimiter", required_argument, NULL, 'd'},
@@ -48,6 +52,12 @@ static struct option const long_options[] =
 
 /// capture conditions
 enum {
+	COMPARE_TYPE_STRING,
+	COMPARE_TYPE_GENERAL_NUM,
+	COMPARE_TYPE_TIME,
+};
+
+enum {
 	CONDITION_NONE,
 	CONDITION_EQUALS,
 	CONDITION_LESS_THAN,
@@ -56,90 +66,129 @@ enum {
 	CONDITION_GREATER_EQUAL,
 };
 
-typedef int (*compare_func_t)(const char* s1, size_t l1, const char* s2, size_t l2);
+typedef struct capture_condition_s capture_condition_t;
 
-typedef struct {
+typedef int (*compare_func_t)(capture_condition_t* cond, const char* str, size_t len);
+
+struct capture_condition_s {
+	capture_expression_t* capture_expression;
 	int capture_index;
 	int comparison;
 	compare_func_t comparison_func;
-	const char* value;
-	size_t value_len;
-} capture_condition_t;
+	union {
+		struct {
+			const char* data;
+			size_t len;
+		} str;
+		long double num;
+		time_t time;
+	} u;
+};
 
 static capture_condition_t* capture_conditions = NULL;
 
 static int
-string_compare(const char* s1, size_t l1, const char* s2, size_t l2)
+string_compare(capture_condition_t* cond, const char* str, size_t len)
 {
 	int compare_result;
-	
-	compare_result = memcmp(s1, s2, min(l1, l2));
+
+	compare_result = memcmp(str, cond->u.str.data, min(len, cond->u.str.len));
 	if (compare_result != 0)
 	{
 		return compare_result;
 	}
-	
-	if (l1 < l2)
+
+	if (len < cond->u.str.len)
 	{
 		return -1;
 	}
-	else if (l1 > l2)
+	else if (len > cond->u.str.len)
 	{
 		return 1;
 	}
-	
+
 	return 0;
 }
 
-static int
-general_numcompare(const char* s1, size_t l1, const char* s2, size_t l2)
+static bool_t
+parse_time(const char* str, size_t len, time_t* result)
 {
-	char sa[32];
-	char sb[32];
-	char* ea;
-	char* eb;
-	long double a;
-	long double b;
+	char buf[128];
+	struct tm tm;
 
-	// null terminate, copy 31 chars at most
-	if (l1 > sizeof(sa) - 1)
+	// null terminate
+	if (len > sizeof(buf) - 1)
 	{
-		l1 = sizeof(sa) - 1;
+		len = sizeof(buf) - 1;
 	}
-	memcpy(sa, s1, l1);
-	sa[l1] = '\0';
+	memcpy(buf, str, len);
+	buf[len] = '\0';
 
-	if (l2 > sizeof(sb) - 1)
+	// parse the time
+	if (strptime(str, time_format, &tm) == NULL)
 	{
-		l2 = sizeof(sb) - 1;
+		return FALSE;
 	}
-	memcpy(sb, s2, l2);
-	sb[l2] = '\0';
+
+	tm.tm_isdst = 0;		// not set by strptime
+	*result = mktime(&tm);
+	return TRUE;
+}
+
+static int
+time_compare(capture_condition_t* cond, const char* str, size_t len)
+{
+	time_t t1;
+
+	if (!parse_time(str, len, &t1))
+	{
+		return -1;
+	}
+
+	return (int)t1 - (int)cond->u.time;
+}
+
+static bool_t
+parse_general_num(const char* str, size_t len, long double* result)
+{
+	char buf[32];
+	char* endptr;
+
+	// null terminate
+	if (len > sizeof(buf) - 1)
+	{
+		len = sizeof(buf) - 1;
+	}
+	memcpy(buf, str, len);
+	buf[len] = '\0';
+
+	*result = strtold(buf, &endptr);
+
+	return endptr != buf;
+}
+
+static int
+general_numcompare(capture_condition_t* cond, const char* str, size_t len)
+{
+	long double num;
 
 	// the code below taken from coreutils sort - general_numcompare
-	a = strtold(sa, &ea);
-	b = strtold(sb, &eb);
 
 	// put conversion errors at the start of the collating sequence.
-	if (sa == ea)
+	if (!parse_general_num(str, len, &num))
 	{
-		return sb == eb ? 0 : -1;
-	}
-
-	if (sb == eb)
-	{
-		return 1;
+		return -1;
 	}
 
 	// Sort numbers in the usual way, where -0 == +0.  Put NaNs after
 	//	conversion errors but before numbers; sort them by internal
 	//	bit-pattern, for lack of a more portable alternative.
-	return (a < b ? -1
-		: a > b ? 1
-		: a == b ? 0
-		: b == b ? -1
-		: a == a ? 1
-		: memcmp(&a, &b, sizeof a));
+	return (num < cond->u.num ? -1
+		: num > cond->u.num ? 1
+		: num == cond->u.num ? 0
+		: cond->u.num == cond->u.num ? -1
+		: num == num ? 1
+		: memcmp(&num, &cond->u.num, sizeof(num)));
 }
 
 static capture_condition_t*
@@ -148,9 +197,13 @@ capture_conditions_parse(const char* str)
 	capture_condition_t* result;
 	capture_condition_t* cur;
 	const char* pos;
+	const char* end_pos;
 	const char* comma_pos;
+	const char* value;
+	size_t value_len;
+	int compare_type;
 	int count;
-	
+
 	count = 0;
 	for (pos = str; *pos; pos++)
 	{
@@ -159,47 +212,79 @@ capture_conditions_parse(const char* str)
 			count++;
 		}
 	}
-	
+
 	result = malloc(sizeof(result[0]) * (count + 2));
 	if (result == NULL)
 	{
 		error(0, "malloc failed");
 		return NULL;
 	}
-	
+
 	cur = result;
 	pos = str;
 	for (;;)
 	{
-		if (*pos++ != '$')
+		switch (*pos++)
 		{
+		case '$':
+			if (*pos < '1' || *pos > '9')
+			{
+				error(0, "expected capture index in capture condition");
+				goto error;
+			}
+			cur->capture_expression = NULL;
+			cur->capture_index = *pos++ - '1';
+			break;
+
+		case '"':
+		case '\'':
+			end_pos = strchr(pos, pos[-1]);
+			if (end_pos == NULL)
+			{
+				error(0, "missing closing quote");
+				goto error;
+			}
+
+			cur->capture_expression = parse_capture_expression(
+				pos, 
+				end_pos - pos, 
+				&cur->capture_index);
+			if (cur->capture_expression == NULL)
+			{
+				goto error;
+			}
+
+			pos = end_pos + 1;
+			break;
+
+		default:
 			error(0, "expected $ in capture condition");
 			goto error;
 		}
-		
-		if (*pos < '1' || *pos > '9')
+
+		switch (*pos)
 		{
-			error(0, "expected capture index in capture condition");
-			goto error;
-		}
-		cur->capture_index = *pos++ - '1';
-		
-		if (*pos == '#')
-		{
-			cur->comparison_func = general_numcompare;
+		case '@':
+			compare_type = COMPARE_TYPE_TIME;
 			pos++;
+			break;
+
+		case '#':
+			compare_type = COMPARE_TYPE_GENERAL_NUM;
+			pos++;
+			break;
+
+		default:
+			compare_type = COMPARE_TYPE_STRING;
+			break;
 		}
-		else
-		{
-			cur->comparison_func = string_compare;
-		}
-		
+
 		switch (*pos++)
 		{
 		case '=':
 			cur->comparison = CONDITION_EQUALS;
 			break;
-			
+
 		case '<':
 			if (*pos == '=')
 			{
@@ -211,7 +296,7 @@ capture_conditions_parse(const char* str)
 				cur->comparison = CONDITION_LESS_THAN;
 			}
 			break;
-			
+
 		case '>':
 			if (*pos == '=')
 			{
@@ -223,24 +308,59 @@ capture_conditions_parse(const char* str)
 				cur->comparison = CONDITION_GREATER_THAN;
 			}
 			break;
-			
+
 		default:
+			error(0, "expected comparison operator");
 			goto error;
 		}
-		
-		cur->value = pos;
+
+		value = pos;
 		comma_pos = strchr(pos, ',');
 		if (comma_pos == NULL)
 		{
-			cur->value_len = strlen(pos);
+			value_len = strlen(pos);
+		}
+		else
+		{
+			value_len = comma_pos - pos;
+		}
+
+		switch (compare_type)
+		{
+		case COMPARE_TYPE_TIME:
+			if (!parse_time(value, value_len, &cur->u.time))
+			{
+				error(0, "failed to parse reference time");
+				goto error;
+			}
+			cur->comparison_func = time_compare;
+			break;
+
+		case COMPARE_TYPE_GENERAL_NUM:
+			if (!parse_general_num(value, value_len, &cur->u.num))
+			{
+				error(0, "failed to parse reference number");
+				goto error;
+			}
+			cur->comparison_func = general_numcompare;
+			break;
+
+		case COMPARE_TYPE_STRING:
+			cur->u.str.data = value;
+			cur->u.str.len = value_len;
+			cur->comparison_func = string_compare;
 			break;
 		}
-		
-		cur->value_len = comma_pos - pos;
+
+		if (comma_pos == NULL)
+		{
+			break;
+		}
+
 		pos = comma_pos + 1;
 		cur++;
 	}
-	
+
 	cur[1].comparison = CONDITION_NONE;
 	return result;
 
@@ -254,52 +374,66 @@ capture_conditions_eval(const char* buffer, int* captures, int exec_result)
 {
 	capture_condition_t* cur;
 	const char* value;
+	char buf[1024];
 	size_t value_len;
 	bool_t cur_result;
 	int value_start;
 	int compare_result;
-	
+
 	if (capture_conditions == NULL)
 	{
 		return TRUE;
 	}
-	
+
 	for (cur = capture_conditions; cur->comparison != CONDITION_NONE; cur++)
 	{
-		if (cur->capture_index + 1 >= exec_result)
+		if (exec_result < cur->capture_index + 2)
 		{
 			return FALSE;
 		}
-		
-		value_start = captures[(cur->capture_index + 1) * 2];
-		value_len = captures[(cur->capture_index + 1) * 2 + 1] - value_start;
-		value = buffer + value_start;
+
+		if (cur->capture_expression != NULL)
+		{
+			value_len = eval_capture_expression(
+				cur->capture_expression, 
+				buf, 
+				sizeof(buf), 
+				buffer, 
+				captures);
+			value = buf;
+		}
+		else
+		{
+			value_start = captures[(cur->capture_index + 1) * 2];
+			value_len = captures[(cur->capture_index + 1) * 2 + 1] - value_start;
+			value = buffer + value_start;
+		}
 
 		// optimization for string '=' - no need to run compare if the lengths are different
 		if (cur->comparison_func == string_compare &&
 			cur->comparison == CONDITION_EQUALS)
 		{
-			if (value_len == cur->value_len &&
-				memcmp(value, cur->value, value_len) == 0)
+			if (value_len == cur->u.str.len &&
+				memcmp(value, cur->u.str.data, value_len) == 0)
 			{
 				continue;
 			}
-			
+
 			return FALSE;
 		}
-		
-		compare_result = cur->comparison_func(value, value_len, cur->value, cur->value_len);
-		
+
+		compare_result = cur->comparison_func(cur, value, value_len);
+
 		switch (cur->comparison)
 		{
 		case CONDITION_EQUALS:
 			cur_result = compare_result == 0;
 			break;
-		
+
 		case CONDITION_LESS_THAN:
 			cur_result = compare_result < 0;
 			break;
-				
+
 		case CONDITION_LESS_EQUAL:
 			cur_result = compare_result <= 0;
 			break;
@@ -307,22 +441,22 @@ capture_conditions_eval(const char* buffer, int* captures, int exec_result)
 		case CONDITION_GREATER_THAN:
 			cur_result = compare_result > 0;
 			break;
-				
+
 		case CONDITION_GREATER_EQUAL:
 			cur_result = compare_result >= 0;
 			break;
-			
+
 		default:
 			cur_result = FALSE;
 			break;
 		}
-		
+
 		if (!cur_result)
 		{
 			return FALSE;
 		}
 	}
-	
+
 	return TRUE;
 }
 
@@ -383,7 +517,7 @@ block_processor_line_start(block_processor_state_t* state, u_char* buffer, size_
 {
 	int captures[(1 + MAX_CAPTURES) * 3];
 	int exec_result;
-	
+
 	// run the regex to check for block start
 	exec_result = pcre_exec(
 		regex.code, 
@@ -399,19 +533,19 @@ block_processor_line_start(block_processor_state_t* state, u_char* buffer, size_
 		error(0, "pcre_exec failed %d", exec_result);
 		return;
 	}
-	
+
 	if (exec_result == PCRE_ERROR_NOMATCH)
 	{
 		// not a block start
 		return;
 	}
-	
+
 	if (state->state == STATE_COLLECT_BLOCK)
 	{
 		// evaluate the previous block
 		block_processor_eval_filter(state);
 	}
-	
+
 	if (state->state == STATE_OUTPUT_BLOCK && state->suffix_len > 0)
 	{
 		// write the suffix
@@ -432,20 +566,20 @@ static void
 block_processor_append_data(block_processor_state_t* state, u_char* buffer, size_t size)
 {
 	size_t copy_size;
-	
+
 	switch (state->state)
 	{
 	case STATE_IGNORE_BLOCK:
 		return;
-		
+
 	case STATE_OUTPUT_BLOCK:
 		fwrite(buffer, size, 1, stdout);
 		return;
-		
+
 	case STATE_COLLECT_BLOCK:
 		break;		// handled outside the switch
 	}
-	
+
 	if (state->cur_block_start == NULL)
 	{
 		// no data, just point to the provided buffer
@@ -453,14 +587,14 @@ block_processor_append_data(block_processor_state_t* state, u_char* buffer, size
 		state->cur_block_end = buffer + size;
 		return;
 	}
-	
+
 	if (state->cur_block_end == buffer)
 	{
 		// contiguous - extend the current buffer
 		state->cur_block_end += size;
 		return;
 	}
-	
+
 	if (state->cur_block_start != state->block_buffer)
 	{
 		// copy current block to the buffer
@@ -471,22 +605,22 @@ block_processor_append_data(block_processor_state_t* state, u_char* buffer, size
 			error(0, "unexpected - not enough room in block buffer");
 			exit(1);
 		}
-			
+
 		memcpy(state->block_buffer, state->cur_block_start, copy_size);
 		state->cur_block_start = state->block_buffer;
 		state->cur_block_end = state->block_buffer + copy_size;
 	}
-	
+
 	// current block is kept in block buffer, copy as much as possible
 	copy_size = min(size, state->block_buffer + sizeof(state->block_buffer) - state->cur_block_end);
 	memcpy(state->cur_block_end, buffer, copy_size);
 	state->cur_block_end += copy_size;
-	
+
 	if (state->cur_block_end < state->block_buffer + sizeof(state->block_buffer))
 	{
 		return;
 	}
-	
+
 	// buffer is full, evaluate the block
 	if (block_processor_eval_filter(state))
 	{
@@ -498,7 +632,7 @@ static void
 block_processor_flush(block_processor_state_t* state)
 {
 	size_t size;
-	
+
 	if (state->state != STATE_COLLECT_BLOCK || 
 		state->cur_block_start == NULL || 
 		state->cur_block_start == state->block_buffer)
@@ -546,13 +680,13 @@ line_processor_process(void* context, u_char* pos, size_t size)
 	u_char* end;
 	u_char* line_buffer;
 	size_t line_size;
-	
+
 	for (end = pos + size; pos < end; pos = cur_end)
 	{
 		// find a newline
 		newline = memchr(pos, '\n', end - pos);
 		cur_end = newline != NULL ? newline + 1 : end;
-		
+
 		if (!state->line_start)
 		{
 			// ignore all data until a newline is found
@@ -563,7 +697,7 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			}
 			continue;
 		}
-		
+
 		if (state->line_buffer_size > 0 || 
 			(newline == NULL && cur_end - pos < sizeof(state->line_buffer)))
 		{
@@ -585,7 +719,7 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			// after processing the buffer, ignore all data until a newline
 			state->line_start = FALSE;
 		}
-		
+
 		// call the block processor to handle the line data
 		if (state->line_buffer_size > 0)
 		{
@@ -597,19 +731,19 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			line_buffer = pos;
 			line_size = cur_end - pos;
 		}
-		
+
 		block_processor_line_start(state->block_state, line_buffer, line_size);
-		
+
 		// pass all data up to cur_end to the block processor
 		if (state->line_buffer_size > 0)
 		{
 			block_processor_append_data(state->block_state, line_buffer, line_size);
 		}
 		block_processor_append_data(state->block_state, pos, cur_end - pos);
-		
+
 		state->line_buffer_size = 0;
 	}
-	
+
 	// flush the block processor (should not keep any pointers after this function returns)
 	block_processor_flush(state->block_state);
 }
@@ -643,14 +777,14 @@ process_file(const char* file_name, int file_name_prefix)
 		{
 			prefix_len = strlen(file_name);
 		}
-		
+
 		prefix_data = malloc(prefix_len + 2);
 		if (prefix_data == NULL)
 		{
 			error(0, "malloc failed");
 			return 1;
 		}
-		
+
 		memcpy(prefix_data, file_name, prefix_len);
 		prefix_data[prefix_len++] = ':';
 		prefix_data[prefix_len++] = ' ';
@@ -662,9 +796,9 @@ process_file(const char* file_name, int file_name_prefix)
 
 	// initialize the state machines
 	block_processor_init(&block_state, prefix_data, prefix_len, block_delimiter, block_delimiter_len);
-	
+
 	line_processor_init(&line_state, &block_state, compressed_file_get_pos(&compressed_file_state) == 0);
-	
+
 	for (;;)
 	{
 		// pass all uncompressed buffers to the line processor
@@ -714,6 +848,9 @@ Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' -c '$1>=12:34:56' input.log.gz\n\
   -h, --no-filename         suppress the file name prefix on output\n\
   -p, --pattern             a regular expression that identifies block start.\n\
                             the default pattern is ^.\n\
+  -t, --time-format         sets the strptime format that should be used when\n\
+                            performing timestamp comparisons. The default is -\n\
+                            '%%Y-%%m-%%d %%H:%%M:%%S'\n\
   -c, --capture-conditions  an optional set of conditions on the pattern\n\
                             regular expression captures, more details below.\n\
   -f, --filter              an optional JSON encoded filter object that is\n\
@@ -776,7 +913,7 @@ int main(int argc, char **argv)
 
 	// parse the command line
 	program_name = argv[0];
-	
+
 	for (;;)
 	{
 		opt = getopt_long(argc, (char **) argv, short_options, long_options, NULL);
@@ -790,15 +927,19 @@ int main(int argc, char **argv)
 		case 'h':
 			prefix_mode = PM_NO_FILENAME;
 			break;
-			
+
 		case 'H':
 			prefix_mode = PM_WITH_FILENAME;
 			break;
-			
+
 		case 'p':
 			pattern = optarg;
 			break;
-			
+
+		case 't':
+			time_format = optarg;
+			break;
+
 		case 'c':
 			capture_conditions = capture_conditions_parse(optarg);
 			if (capture_conditions == NULL)
@@ -806,7 +947,7 @@ int main(int argc, char **argv)
 				return EXIT_ERROR;
 			}
 			break;
-			
+
 		case 'f':
 			filter = filter_parse(optarg, error_str, sizeof(error_str));
 			if (filter == NULL)
@@ -815,7 +956,7 @@ int main(int argc, char **argv)
 				return EXIT_ERROR;
 			}
 			break;
-			
+
 		case 'd':
 			block_delimiter_len = strlen(optarg);
 			block_delimiter = malloc(block_delimiter_len + 1);
@@ -831,7 +972,7 @@ int main(int argc, char **argv)
 		case 0:
 			// long options
 			break;
-			
+
 		default:
 			usage(EXIT_ERROR);
 			break;
@@ -847,7 +988,7 @@ int main(int argc, char **argv)
     {
 		usage(EXIT_SUCCESS);
 	}
-		
+
 	if (prefix_mode == PM_UNDEFINED)
 	{
 		if (argc - optind > 1)
@@ -859,7 +1000,7 @@ int main(int argc, char **argv)
 			prefix_mode = PM_NO_FILENAME;
 		}
 	}
-	
+
 	// initialize the regex
 	regex.code = pcre_compile(pattern, 0, &errstr, &erroff, NULL);
 	if (regex.code == NULL) 
@@ -881,7 +1022,7 @@ int main(int argc, char **argv)
 	{
 		error(0, "pcre_study() failed: %s", errstr);
 	}
-	
+
 	// process the files
 	rc = 0;
 	while (optind < argc)
@@ -891,6 +1032,6 @@ int main(int argc, char **argv)
 			rc = 1;
 		}
 	}
-	
+
 	return rc;
 }
