@@ -59,9 +59,15 @@ typedef struct {
 	long size;
 } buffer_t;
 
+typedef struct {
+	u_char* start_pos;
+	long count;
+} cached_line_count_t;
+
 // globals
 static list_entry_t buffer_queue;
 static int forever = 0;
+static cached_line_count_t line_count_cache = { 0 };
 
 static long 
 get_line_count_from_offset(buffer_t* cur_buffer, long cur_buffer_offset)
@@ -69,15 +75,24 @@ get_line_count_from_offset(buffer_t* cur_buffer, long cur_buffer_offset)
 	z_stream strm;
 	u_char out[CHUNK_SIZE_COMP];
 	long line_count = 0;
+	u_char* start_pos;
 	u_char* end_pos;
 	u_char* cur_pos;
 	int rc;
 
-	strm.avail_in = 0;
-	strm.next_in = Z_NULL;	
-	
+	start_pos = cur_buffer->data + cur_buffer_offset;
+	strm.avail_in = cur_buffer->size - cur_buffer_offset;
+	strm.next_in = start_pos;
+
 	for (;;)
 	{
+		if (strm.next_in == line_count_cache.start_pos)
+		{
+			line_count_cache.start_pos = start_pos;
+			line_count_cache.count += line_count;
+			return line_count_cache.count;
+		}
+
 		// initialize inflate
 		strm.zalloc = Z_NULL;
 		strm.zfree = Z_NULL;
@@ -93,18 +108,16 @@ get_line_count_from_offset(buffer_t* cur_buffer, long cur_buffer_offset)
 			// get an input buffer
 			while (strm.avail_in == 0)
 			{
-				if (cur_buffer_offset >= cur_buffer->size)
+				if (cur_buffer->node.next == &buffer_queue)
 				{
-					if (cur_buffer->node.next == &buffer_queue)
-					{
-						return line_count;
-					}
-					cur_buffer = (buffer_t*)cur_buffer->node.next;
-					cur_buffer_offset = 0;
+					line_count_cache.start_pos = start_pos;
+					line_count_cache.count = line_count;
+					return line_count_cache.count;
 				}
-				strm.next_in = cur_buffer->data + cur_buffer_offset;
-				strm.avail_in = cur_buffer->size - cur_buffer_offset;
-				cur_buffer_offset = cur_buffer->size;
+
+				cur_buffer = (buffer_t*)cur_buffer->node.next;
+				strm.next_in = cur_buffer->data;
+				strm.avail_in = cur_buffer->size;
 			}
 
 			do 
@@ -364,7 +377,7 @@ int main(int argc, char **argv)
 {
 	buffer_t* new_buffer;
 	FILE *source;
-	long buffer_start_offset;
+	long buffer_start_offset = 0;
 	long cur_line_count;
 	long initial_offset;
 	long bytes_to_read;
