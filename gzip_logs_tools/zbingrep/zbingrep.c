@@ -811,7 +811,8 @@ Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' '02:45:00' input.log.gz\n\
 	exit(status);
 }
 
-int main(int argc, char **argv)
+int 
+main(int argc, char **argv)
 {
 	char* pattern = "(.*)";
 	const char *errstr;

@@ -901,7 +901,8 @@ following types are supported:\n\
 	exit(status);
 }
 
-int main(int argc, char **argv)
+int 
+main(int argc, char **argv)
 {
 	char* pattern = "^.";
 	const char *errstr;
