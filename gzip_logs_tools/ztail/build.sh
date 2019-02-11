@@ -1,1 +1,1 @@
-gcc -Wall -o ztail ztail.c -lz -O3
+gcc -O3 -Wall -o ztail ztail.c -lz

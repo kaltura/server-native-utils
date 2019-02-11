@@ -183,7 +183,7 @@ get_line_count(buffer_t* cur_buffer, long* buffer_start_offset)
 	return -1;
 }
 
-int 
+static int 
 print_lines(FILE* source, int inotify_fd, buffer_t* cur_buffer, long cur_buffer_offset, long skip_count)
 {
 	z_stream strm;
@@ -373,7 +373,8 @@ parse_options(int argc, char **argv, long *n_units)
 	}
 }
 
-int main(int argc, char **argv)
+int 
+main(int argc, char **argv)
 {
 	buffer_t* new_buffer;
 	FILE *source;
