@@ -348,8 +348,6 @@ my_bool
 memc_async_set_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
     if (args->arg_count != 3 || 
-        args->arg_type[0] != STRING_RESULT || args->args[0] == NULL || // key
-        args->arg_type[1] != STRING_RESULT || args->args[1] == NULL || // value
         args->arg_type[2] != INT_RESULT)                               // exp
     {
         strncpy(message, "Usage: memc_async_set(<key>, <value>, <expiration>)", 
@@ -363,6 +361,9 @@ memc_async_set_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
         return 1;
 	}
 	
+    args->arg_type[0] = STRING_RESULT; // key
+    args->arg_type[1] = STRING_RESULT; // value
+
     return 0;
 }
 
