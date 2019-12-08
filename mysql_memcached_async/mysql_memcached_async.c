@@ -40,8 +40,8 @@ typedef long long longlong;
 
 #define MAX_IPV4_ADDRESS_LEN sizeof("000.000.000.000") - 1
 
-#define BUFFER_SIZE (16384)
-#define ITP_SIZE (256)
+#define BUFFER_SIZE  (65536)
+#define ITP_SIZE     (256)
 
 
 #define write_be16(p, w)                \
@@ -94,7 +94,7 @@ typedef struct {
 static state_t  state;
 static int      inited = 0;
 
-static void 
+static void
 log_error(const char *message, ...)
 {
     int         buf_len;
@@ -121,7 +121,7 @@ log_error(const char *message, ...)
 
     va_end(ap);
 
-    fprintf(stderr, "%s", buf);
+    fprintf(stderr, "%s\n", buf);
 }
 
 /* spinlock implementation from nginx */
@@ -169,17 +169,17 @@ ngx_spinlock(ngx_atomic_t *lock, ngx_atomic_int_t value, ngx_uint_t spin)
 }
 
 
-static size_t 
+static inline size_t
 set_command_get_size(str_t *key, str_t *value)
 {
     return 32 + key->len + value->len;
 }
 
-static u_char *
+static inline u_char *
 set_command_write(u_char *p, str_t *key, str_t *value, uint32_t expiration)
 {
     size_t  total_body = 8 + key->len + value->len;
-    
+
     *p++ = 0x80;                        // magic
     *p++ = 0x11;                        // opcode (set quiet)
     write_be16(p, key->len);            // key length
@@ -187,14 +187,13 @@ set_command_write(u_char *p, str_t *key, str_t *value, uint32_t expiration)
     *p++ = 0x00;                        // data type
     write_be16(p, 0);                   // vbucket id
     write_be32(p, total_body);          // total body
-    write_be32(p, 0);                   // opaque
-    write_be64(p, 0LL);                 // cas
-    
-    write_be32(p, 0);                   // flags
+
+    (void) memset(p, 0, 16);            // opaque(4), cas(8), flags(4)
+    p += 16;
     write_be32(p, expiration);          // exp
-    
+
     memcpy(p, key->data, key->len);     // key
-    p += key->len;    
+    p += key->len;
     memcpy(p, value->data, value->len); // value
     p += value->len;
     return p;
@@ -208,64 +207,68 @@ sender_thread(void *context)
     ssize_t        bytes_written;
     itp_buffer_t   input_buffer;
 
-    for (;;) {
-        
+    for ( ;; ) {
+
         if (!itp_read(&state->itp, &input_buffer, TRUE)) {
             log_error("sender_thread: itp_read failed");
             break;
         }
 
-        if (output_fd == -1) {
-            
-            if((output_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-                log_error("sender_thread: socket failed %d", errno);
-                goto next;
-            } 
-    
-            if (connect(output_fd, (struct sockaddr *)&state->addr, 
-                sizeof(state->addr)) < 0)
-            {
-                log_error("sender_thread: connect failed %d", errno);
-                close(output_fd);
-                output_fd = -1;
-                goto next;
+        for ( ;; ) {
+
+            if (output_fd == -1) {
+
+                if ((output_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+                    log_error("sender_thread: socket failed %d", errno);
+                    break;
+                }
+
+                if (connect(output_fd, (struct sockaddr *)&state->addr,
+                    sizeof(state->addr)) < 0)
+                {
+                    log_error("sender_thread: connect failed %d", errno);
+                    close(output_fd);
+                    output_fd = -1;
+                    break;
+                }
             }
-        }
-        
-        bytes_written = write(output_fd, input_buffer.ptr, input_buffer.size);
-        if (bytes_written != input_buffer.size) {
+
+            bytes_written = write(output_fd, input_buffer.ptr,
+                input_buffer.size);
+            if (bytes_written == input_buffer.size) {
+                break;
+            }
+
             log_error("sender_thread: write failed %d", errno);
             close(output_fd);
             output_fd = -1;
         }
 
-next:
-        
         buffer_pool_free(&state->pool, input_buffer.ptr);
     }
-    
+
     return NULL;
 }
 
 
 /*
- * int 
+ * int
     memc_setup(
-        string ip, 
+        string ip,
         int port)
  */
- 
-my_bool 
+
+my_bool
 memc_async_setup_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
-    if (args->arg_count != 2 || 
+    if (args->arg_count != 2 ||
         args->arg_type[0] != STRING_RESULT || args->args[0] == NULL ||  // ip
         args->arg_type[1] != INT_RESULT)                                // port
     {
         strncpy(message, "Usage: memc_setup(<ip>, <port>)", MYSQL_ERRMSG_SIZE);
         return 1;
     }
-    
+
     if (args->lengths[0] > MAX_IPV4_ADDRESS_LEN) {
         strncpy(message, "ip address too long", MYSQL_ERRMSG_SIZE);
         return 1;
@@ -279,17 +282,17 @@ memc_async_setup_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     return 0;
 }
 
-longlong 
+longlong
 memc_async_setup(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
 {
     int       rc;
     char      ip_addr[MAX_IPV4_ADDRESS_LEN + 1];
     longlong  port;
-    
+
     /* parse the address */
     memcpy(ip_addr, args->args[0], args->lengths[0]);
     ip_addr[args->lengths[0]] = '\0';
-    
+
     port = *((longlong*)args->args[1]);
     if (port <= 0 || port >= 65536) {
         log_error("memc_async_setup: invalid port");
@@ -300,10 +303,10 @@ memc_async_setup(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
         log_error("memc_async_setup: failed to parse ip address");
         return 0LL;
     }
-    
+
     state.addr.sin_family = AF_INET;
-    state.addr.sin_port = htons(port); 
-    
+    state.addr.sin_port = htons(port);
+
     /* initialize */
     if (!buffer_pool_init(&state.pool, BUFFER_SIZE)) {
         log_error("memc_async_setup: buffer_pool_init failed");
@@ -320,54 +323,54 @@ memc_async_setup(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
         log_error("memc_async_setup: pthread_create failed %d", rc);
         return 0LL;
     }
-    
+
     ngx_ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 
     state.start = state.end = state.last = NULL;
-    
+
     state.write_lock = 0;
     inited = 1;
-    
+
     return 1LL;
 }
 
-void 
+void
 memc_async_setup_deinit(UDF_INIT *initid)
 {
 }
 
 
 /*
- * int 
+ * int
     memc_set(
-        string key, 
+        string key,
         string value,
         int expiration)
  */
-my_bool 
+my_bool
 memc_async_set_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
-    if (args->arg_count != 3 || 
+    if (args->arg_count != 3 ||
         args->arg_type[2] != INT_RESULT)                               // exp
     {
-        strncpy(message, "Usage: memc_async_set(<key>, <value>, <expiration>)", 
+        strncpy(message, "Usage: memc_async_set(<key>, <value>, <expiration>)",
             MYSQL_ERRMSG_SIZE);
         return 1;
     }
 
-	if (!inited) {
-        strncpy(message, "Not initialized, call memc_async_setup", 
+    if (!inited) {
+        strncpy(message, "Not initialized, call memc_async_setup",
             MYSQL_ERRMSG_SIZE);
         return 1;
-	}
-	
+    }
+
     args->arg_type[0] = STRING_RESULT; // key
     args->arg_type[1] = STRING_RESULT; // value
 
     return 0;
 }
 
-longlong 
+longlong
 memc_async_set(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
 {
     str_t          key;
@@ -379,56 +382,50 @@ memc_async_set(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
 
     /* get the params */
     key.data = args->args[0];
-    key.len = (size_t)args->lengths[0];
+    key.len = key.data != NULL ? (size_t) args->lengths[0] : 0;
     value.data = args->args[1];
-    value.len = (size_t)args->lengths[1];
-    expiration = (uint32_t)*((longlong*)args->args[2]);
-    
-    if (key.data == NULL) {
-        key.len = 0;
-    }
-
-    if (value.data == NULL) {
-        value.len = 0;
-    }
+    value.len = value.data != NULL ? (size_t) args->lengths[1] : 0;
+    expiration = (uint32_t) *((longlong*)args->args[2]);
 
     size = set_command_get_size(&key, &value);
-    
-    send_buf.size = 0;
-    
+
     ngx_spinlock(&state.write_lock, 1, 2048);
-        
-    if (state.end - state.last < size) {
 
-        if (size > BUFFER_SIZE) {
-            ngx_unlock(&state.write_lock);
-            log_error("memc_async_set: key/value too large");
-            return 0LL;
-        }
-
-        new_buf = buffer_pool_alloc(&state.pool);
-        if (new_buf == NULL) {
-            ngx_unlock(&state.write_lock);
-            log_error("memc_async_set: failed to alloc buffer");
-            return 0LL;
-        }
-
-        if (state.last > state.start) {
-            send_buf.ptr = state.start;
-            send_buf.size = state.last - state.start;
-            send_buf.flags = 0;
-        }
-                
-        state.start = new_buf;
-        state.end = state.start + BUFFER_SIZE;
-        state.last = state.start;
+    if (state.end - state.last >= size) {
+        state.last = set_command_write(state.last, &key, &value, expiration);
+        ngx_unlock(&state.write_lock);
+        return 1LL;
     }
-    
-    state.last = set_command_write(state.last, &key, &value, expiration);
+
+    send_buf.size = 0;
+
+    if (size > BUFFER_SIZE) {
+        ngx_unlock(&state.write_lock);
+        log_error("memc_async_set: key/value too large");
+        return 0LL;
+    }
+
+    new_buf = buffer_pool_alloc(&state.pool);
+    if (new_buf == NULL) {
+        ngx_unlock(&state.write_lock);
+        log_error("memc_async_set: failed to alloc buffer");
+        return 0LL;
+    }
+
+    if (state.last > state.start) {
+        send_buf.ptr = state.start;
+        send_buf.size = state.last - state.start;
+        send_buf.flags = 0;
+    }
+
+    state.start = new_buf;
+    state.end = state.start + BUFFER_SIZE;
+
+    state.last = set_command_write(state.start, &key, &value, expiration);
     ngx_unlock(&state.write_lock);
-    
+
     if (send_buf.size > 0) {
-        
+
         if (!itp_write(&state.itp, &send_buf, FALSE)) {
             log_error("memc_async_set: queue full, throwing buffer");
         }
@@ -437,7 +434,7 @@ memc_async_set(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
     return 1LL;
 }
 
-void 
+void
 memc_async_set_deinit(UDF_INIT *initid)
 {
 }
