@@ -91,8 +91,9 @@ typedef struct {
     ngx_atomic_t         write_lock;
 } state_t;
 
-static state_t  state;
-static int      inited = 0;
+static state_t                state;
+static int                    inited = 0;
+static volatile sig_atomic_t  reconnect = 0;
 
 static void
 log_error(const char *message, ...)
@@ -216,6 +217,15 @@ sender_thread(void *context)
 
         for ( ;; ) {
 
+            if (reconnect) {
+                reconnect = 0;
+
+                if (output_fd != -1) {
+                    close(output_fd);
+                    output_fd = -1;
+                }
+            }
+
             if (output_fd == -1) {
 
                 if ((output_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -274,20 +284,16 @@ memc_async_setup_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
         return 1;
     }
 
-    if (inited) {
-        strncpy(message, "already initialized", MYSQL_ERRMSG_SIZE);
-        return 1;
-    }
-
     return 0;
 }
 
 longlong
 memc_async_setup(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
 {
-    int       rc;
-    char      ip_addr[MAX_IPV4_ADDRESS_LEN + 1];
-    longlong  port;
+    int             rc;
+    char            ip_addr[MAX_IPV4_ADDRESS_LEN + 1];
+    longlong        port;
+    struct in_addr  sin_addr;
 
     /* parse the address */
     memcpy(ip_addr, args->args[0], args->lengths[0]);
@@ -299,13 +305,19 @@ memc_async_setup(UDF_INIT *initid, UDF_ARGS *args, char *is_null, char *error)
         return 0LL;
     }
 
-    if (inet_pton(AF_INET, ip_addr, &state.addr.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, ip_addr, &sin_addr) <= 0) {
         log_error("memc_async_setup: failed to parse ip address");
         return 0LL;
     }
 
     state.addr.sin_family = AF_INET;
+    state.addr.sin_addr = sin_addr;
     state.addr.sin_port = htons(port);
+
+    if (inited) {
+        reconnect = 1;
+        return 1LL;
+    }
 
     /* initialize */
     if (!buffer_pool_init(&state.pool, BUFFER_SIZE)) {
