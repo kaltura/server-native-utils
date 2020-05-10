@@ -1,1 +1,1 @@
-gcc -O2 -Wall -o zblockgrep zblockgrep.c json_parser.c filter.c ../compressed_file.c ../capture_expression.c ../common.c -lz -lpcre
+gcc -g -O2 -Wall -o zblockgrep zblockgrep.c json_parser.c filter.c ../compressed_file.c ../capture_expression.c ../common.c -lz -lpcre -lcurl

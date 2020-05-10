@@ -16,7 +16,7 @@ enum {
 	PM_WITH_FILENAME,
 };
 
-enum { 
+enum {
 	EXIT_ERROR = 2,
 };
 
@@ -246,8 +246,8 @@ capture_conditions_parse(const char* str)
 			}
 
 			cur->capture_expression = parse_capture_expression(
-				pos, 
-				end_pos - pos, 
+				pos,
+				end_pos - pos,
 				&cur->capture_index);
 			if (cur->capture_expression == NULL)
 			{
@@ -395,10 +395,10 @@ capture_conditions_eval(const char* buffer, int* captures, int exec_result)
 		if (cur->capture_expression != NULL)
 		{
 			value_len = eval_capture_expression(
-				cur->capture_expression, 
-				buf, 
-				sizeof(buf), 
-				buffer, 
+				cur->capture_expression,
+				buf,
+				sizeof(buf),
+				buffer,
 				captures);
 			value = buf;
 		}
@@ -480,8 +480,8 @@ typedef struct {
 
 static void
 block_processor_init(
-	block_processor_state_t* state, 
-	const char* prefix_data, 
+	block_processor_state_t* state,
+	const char* prefix_data,
 	size_t prefix_len,
 	const char* suffix_data,
 	size_t suffix_len)
@@ -520,13 +520,13 @@ block_processor_line_start(block_processor_state_t* state, u_char* buffer, size_
 
 	// run the regex to check for block start
 	exec_result = pcre_exec(
-		regex.code, 
-		regex.extra, 
-		(const char *)buffer, 
-		size, 
-		0, 
-		0, 
-		captures, 
+		regex.code,
+		regex.extra,
+		(const char *)buffer,
+		size,
+		0,
+		0,
+		captures,
 		sizeof(captures) / sizeof(captures[0]));
 	if (exec_result < PCRE_ERROR_NOMATCH)
 	{
@@ -633,8 +633,8 @@ block_processor_flush(block_processor_state_t* state)
 {
 	size_t size;
 
-	if (state->state != STATE_COLLECT_BLOCK || 
-		state->cur_block_start == NULL || 
+	if (state->state != STATE_COLLECT_BLOCK ||
+		state->cur_block_start == NULL ||
 		state->cur_block_start == state->block_buffer)
 	{
 		return;
@@ -698,7 +698,7 @@ line_processor_process(void* context, u_char* pos, size_t size)
 			continue;
 		}
 
-		if (state->line_buffer_size > 0 || 
+		if (state->line_buffer_size > 0 ||
 			(newline == NULL && cur_end - pos < sizeof(state->line_buffer)))
 		{
 			// copy as much as possible to the buffer
@@ -749,18 +749,24 @@ line_processor_process(void* context, u_char* pos, size_t size)
 }
 
 /// main
-static int 
+static int
 process_file(const char* file_name, int file_name_prefix)
 {
+	compressed_file_observer_t observer;
 	compressed_file_state_t compressed_file_state;
-	line_processor_state_t line_state;
 	block_processor_state_t block_state;
-	char* prefix_data = NULL;
-	size_t prefix_len;
+	line_processor_state_t line_state;
 	const char* colon_pos;
+	size_t prefix_len;
+	char* prefix_data = NULL;
+	long file_pos;
 
 	// open the file
-	if (!compressed_file_init(&compressed_file_state, file_name))
+	memset(&observer, 0, sizeof(observer));
+	observer.process_chunk = &line_processor_process;
+
+	file_pos = compressed_file_init(&compressed_file_state, file_name, &observer, &line_state);
+	if (file_pos < 0)
 	{
 		return 1;
 	}
@@ -768,8 +774,8 @@ process_file(const char* file_name, int file_name_prefix)
 	// initialize the prefix buffer
 	if (file_name_prefix)
 	{
-		colon_pos = strchr(file_name, ':');
-		if (colon_pos != NULL)
+		colon_pos = strrchr(file_name, ':');
+		if (colon_pos != NULL && colon_pos[1] != '/')
 		{
 			prefix_len = colon_pos - file_name;
 		}
@@ -797,19 +803,10 @@ process_file(const char* file_name, int file_name_prefix)
 	// initialize the state machines
 	block_processor_init(&block_state, prefix_data, prefix_len, block_delimiter, block_delimiter_len);
 
-	line_processor_init(&line_state, &block_state, compressed_file_get_pos(&compressed_file_state) == 0);
+	line_processor_init(&line_state, &block_state, file_pos == 0);
 
-	for (;;)
-	{
-		// pass all uncompressed buffers to the line processor
-		if (compressed_file_process_segment(
-			&compressed_file_state, 
-			&line_processor_process, 
-			&line_state) != PROCESS_SUCCESS)
-		{
-			break;
-		}
-	}
+	compressed_file_process(&compressed_file_state);
+
 
 	// clean up
 	free(prefix_data);
@@ -901,11 +898,12 @@ following types are supported:\n\
 	exit(status);
 }
 
-int 
+int
 main(int argc, char **argv)
 {
-	char* pattern = "^.";
 	const char *errstr;
+	CURLcode res;
+	char* pattern = "^.";
 	char error_str[128];
 	int prefix_mode = PM_UNDEFINED;
 	int erroff;
@@ -1004,35 +1002,45 @@ main(int argc, char **argv)
 
 	// initialize the regex
 	regex.code = pcre_compile(pattern, 0, &errstr, &erroff, NULL);
-	if (regex.code == NULL) 
+	if (regex.code == NULL)
 	{
-		if ((size_t) erroff == strlen(pattern)) 
+		if ((size_t) erroff == strlen(pattern))
 		{
 			error(0, "pcre_compile() failed: %s in \"%s\"", errstr, pattern);
-		} 
-		else 
+		}
+		else
 		{
 			error(0, "pcre_compile() failed: %s in \"%s\" at \"%s\"", errstr, pattern, pattern + erroff);
 		}
 
-		return 1;
+		return EXIT_ERROR;
 	}
 
 	regex.extra = pcre_study(regex.code, 0, &errstr);
-	if (errstr != NULL) 
+	if (errstr != NULL)
 	{
 		error(0, "pcre_study() failed: %s", errstr);
 	}
 
+	// init curl
+	res = curl_global_init(CURL_GLOBAL_DEFAULT);
+	if (res != CURLE_OK)
+	{
+		error(0, "curl_global_init failed: %d", res);
+		return EXIT_ERROR;
+	}
+
 	// process the files
-	rc = 0;
+	rc = EXIT_SUCCESS;
 	while (optind < argc)
 	{
 		if (process_file(argv[optind++], prefix_mode == PM_WITH_FILENAME) != 0)
 		{
-			rc = 1;
+			rc = EXIT_ERROR;
 		}
 	}
+
+	curl_global_cleanup();
 
 	return rc;
 }

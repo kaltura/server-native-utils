@@ -1,131 +1,34 @@
+#include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
-#include <errno.h>
 #include "compressed_file.h"
 #include "common.h"
 
-bool_t
-compressed_file_init(compressed_file_state_t* state, const char* file_name)
-{
-	const char* colon_pos;
-	FILE* file;
-	char* file_name_copy;
-	long file_name_len;
-	long start;
-	long end;
 
-	// parse range specification
-	colon_pos = strchr(file_name, ':');
-	if (colon_pos != NULL)
-	{
-		if (sscanf(colon_pos + 1, "%ld-%ld", &start, &end) != 2)
-		{
-			error(0, "failed to parse range specification %s", colon_pos);
-			return FALSE;
-		}
+enum {
+	STATE_INFLATE,
+	STATE_END,
+	STATE_RESYNC,
+};
 
-		file_name_len = colon_pos - file_name;
-	}
-	else
-	{
-		start = end = 0;
-		file_name_len = strlen(file_name);
-	}
 
-	// strip the range specification
-	file_name_copy = malloc(file_name_len + 1);
-	if (file_name_copy == NULL)
-	{
-		error(0, "malloc failed");
-		return FALSE;
-	}
-
-	memcpy(file_name_copy, file_name, file_name_len);
-	file_name_copy[file_name_len] = '\0';
-
-	// open the file and seek
-	file = fopen(file_name_copy, "rb");
-	if (file == NULL)
-	{
-		error(errno, "%s", file_name_copy);
-		free(file_name_copy);
-		return FALSE;
-	}
-	
-	if (fseek(file, start, SEEK_SET) == -1)
-	{
-		error(errno, "%s", file_name_copy);
-		fclose(file);
-		free(file_name_copy);
-		return FALSE;
-	}
-
-	// initialize the state
-	state->source = file;
-	state->file_name = file_name_copy;
-	state->limit = end;
-	state->strm.zalloc = Z_NULL;
-	state->strm.zfree = Z_NULL;
-	state->strm.opaque = Z_NULL;
-	state->strm.avail_in = 0;
-	state->strm.next_in = Z_NULL;
-	return TRUE;
-}
-
-void
-compressed_file_free(compressed_file_state_t* state)
-{
-	if (state->source != NULL)
-	{
-		fclose(state->source);
-		state->source = NULL;
-	}
-	free(state->file_name);
-	state->file_name = NULL;
-}
-
-long
+static long
 compressed_file_get_pos(compressed_file_state_t* state)
 {
-	return ftell(state->source) - state->strm.avail_in;
+	return state->cur_pos - state->strm.avail_in;
 }
 
-int
-compressed_file_process_segment(compressed_file_state_t* state, process_chunk_callback_t callback, void* context)
+static bool_t
+compressed_file_inflate(compressed_file_state_t* state)
 {
 	int rc;
 
-	rc = inflateInit2(&state->strm, 31);
-	if (rc != Z_OK)
+	while (state->strm.avail_in > 0)
 	{
-		error(0, "inflateInit2 failed %d", rc);
-		return PROCESS_ERROR;
-	}
-
-	do 
-	{
-		if (state->strm.avail_in == 0)
-		{
-			// read more data from file
-			state->strm.avail_in = fread(state->in, 1, sizeof(state->in), state->source);
-			if (ferror(state->source))
-			{
-				error(errno, "%s", state->file_name);
-				(void)inflateEnd(&state->strm);
-				return PROCESS_ERROR;
-			}
-
-			if (state->strm.avail_in == 0)
-			{
-				error(0, "%s: truncated file", state->file_name);
-				(void)inflateEnd(&state->strm);
-				return PROCESS_ERROR;
-			}
-			state->strm.next_in = state->in;
-		}
+		state->state = STATE_INFLATE;
 
 		// inflate data until more input is needed / end of stream
-		do 
+		do
 		{
 			state->strm.next_out = state->out;
 			state->strm.avail_out = sizeof(state->out);
@@ -133,93 +36,314 @@ compressed_file_process_segment(compressed_file_state_t* state, process_chunk_ca
 			if (rc == Z_STREAM_ERROR)
 			{
 				// unexpected
-				error(0, "%s: stream error", state->file_name);
+				error(0, "%s: stream error", state->input_url);
 				exit(1);
 			}
 
-			switch (rc) 
+			state->observer.process_chunk(state->context, state->out, sizeof(state->out) - state->strm.avail_out);
+
+			switch (rc)
 			{
 			case Z_NEED_DICT:
-				rc = Z_DATA_ERROR;
-				// fallthrough
-
 			case Z_DATA_ERROR:
 			case Z_MEM_ERROR:
-				(void)inflateEnd(&state->strm);
-				return PROCESS_RESYNC;
-			}
+				if (state->observer.segment_end)
+				{
+					state->observer.segment_end(state->context, compressed_file_get_pos(state), TRUE);
+				}
 
-			callback(context, state->out, sizeof(state->out) - state->strm.avail_out);
+				state->state = STATE_RESYNC;
+				state->last_word = 0;
+
+				return TRUE;
+			}
 		} while (state->strm.avail_out == 0);
 
-	} while (rc != Z_STREAM_END);
-
-	(void)inflateEnd(&state->strm);
-
-	if (state->limit > 0)
-	{
-		if (compressed_file_get_pos(state) >= state->limit)
+		if (rc == Z_STREAM_END)
 		{
-			return PROCESS_DONE;
+			if (state->observer.segment_end)
+			{
+				state->observer.segment_end(state->context, compressed_file_get_pos(state), FALSE);
+			}
+
+			state->state = STATE_END;
+
+			rc = inflateReset(&state->strm);
+			if (rc != Z_OK)
+			{
+				error(0, "inflateReset failed %d", rc);
+				return FALSE;
+			}
 		}
 	}
-	else if (feof(state->source) && state->strm.avail_in <= 0)
-	{
-		return PROCESS_DONE;
-	}
 
-	return PROCESS_SUCCESS;
+	return TRUE;
 }
 
-int
+static bool_t
 compressed_file_resync(compressed_file_state_t* state)
 {
-	if (state->strm.avail_in > 0)
+	unsigned short sync_word = 0x8b1f;
+	unsigned char* saved_next_in;
+	unsigned char cur_byte;
+	unsigned saved_avail_in;
+	int rc;
+
+	while (state->strm.avail_in > 0)
 	{
-		// advance one byte to make sure we don't get stuck in endless loop
-		state->strm.next_in++;
+		cur_byte = *state->strm.next_in++;
 		state->strm.avail_in--;
-	}
 
-	for (;;)
-	{
-		if (state->strm.avail_in < 2)
+		state->last_word = (cur_byte << 8) | (state->last_word >> 8);
+
+		if (state->last_word != sync_word)
 		{
-			// need more input
-			if (state->strm.avail_in > 0)
-			{
-				// copy the one byte we have to the beginning of the buffer
-				state->in[0] = state->strm.next_in[0];
-				state->strm.avail_in = 1;
-			}
-			else
-			{
-				state->strm.avail_in = 0;
-			}
-			state->strm.next_in = state->in;
-
-			// read from file
-			state->strm.avail_in += fread(state->in + state->strm.avail_in, 1, sizeof(state->in) - state->strm.avail_in, state->source);
-			if (ferror(state->source))
-			{
-				break;
-			}
-
-			if (state->strm.avail_in < 2)
-			{
-				break;
-			}
+			continue;
 		}
 
-		// look for gzip marker
-		if (state->strm.next_in[0] == 0x1f && state->strm.next_in[1] == 0x8b)
+		state->state = STATE_INFLATE;
+
+		rc = inflateReset(&state->strm);
+		if (rc != Z_OK)
 		{
-			return 1;
+			error(0, "inflateReset failed %d", rc);
+			return FALSE;
 		}
 
-		state->strm.next_in++;
-		state->strm.avail_in--;
+		saved_next_in = state->strm.next_in;
+		saved_avail_in = state->strm.avail_in;
+
+		state->strm.next_in = (void *)&sync_word;
+		state->strm.avail_in = sizeof(sync_word);
+		state->strm.next_out = state->out;
+		state->strm.avail_out = sizeof(state->out);
+		rc = inflate(&state->strm, Z_NO_FLUSH);
+		if (rc != Z_OK)
+		{
+			error(0, "inflate failed %d", rc);
+			return FALSE;
+		}
+
+		state->strm.next_in = saved_next_in;
+		state->strm.avail_in = saved_avail_in;
+
+		if (state->observer.resync)
+		{
+			state->observer.resync(state->context, compressed_file_get_pos(state) - sizeof(sync_word));
+		}
+
+		break;
 	}
 
-	return 0;
+	return TRUE;
+}
+
+static size_t
+compressed_file_handle_data(void *buf, size_t mbr_size, size_t mbr_count, void *data)
+{
+	compressed_file_state_t* state = data;
+	size_t size = mbr_size * mbr_count;
+
+	state->cur_pos += size;
+
+	state->strm.next_in = buf;
+	state->strm.avail_in = size;
+
+	while (state->strm.avail_in > 0)
+	{
+		switch (state->state)
+		{
+		case STATE_INFLATE:
+		case STATE_END:
+			if (!compressed_file_inflate(state))
+			{
+				return 0;
+			}
+			break;
+
+		case STATE_RESYNC:
+			if (!compressed_file_resync(state))
+			{
+				return 0;
+			}
+			break;
+		}
+	}
+
+	return size;
+}
+
+
+long
+compressed_file_init(compressed_file_state_t* state, const char* url, compressed_file_observer_t* observer, void* context)
+{
+	const char* range_start;
+	const char* scheme_end;
+	const char* prefix;
+	CURLcode res;
+	char range[64];
+	char* url_copy;
+	long prefix_len;
+	long url_len;
+	long start;
+	long end;
+	int rc;
+
+	memset(state, 0, offsetof(compressed_file_state_t, out));
+
+	scheme_end = strstr(url, "://");
+	if (scheme_end != NULL)
+	{
+		scheme_end += sizeof("://") - 1;
+		prefix = "";
+		prefix_len = 0;
+	}
+	else
+	{
+		scheme_end = url;
+		prefix = "file://localhost";
+		prefix_len = sizeof("file://localhost") - 1;
+	}
+
+
+	range_start = strchr(scheme_end, ':');
+	if (range_start != NULL)
+	{
+		if (sscanf(range_start + 1, "%ld-%ld", &start, &end) != 2)
+		{
+			error(0, "failed to parse range specification %s", range_start);
+			goto failed;
+		}
+	}
+	else
+	{
+		start = end = 0;
+		range_start = url + strlen(url);
+	}
+
+
+	url_len = prefix_len + range_start - url;
+	url_copy = malloc(url_len + 1);
+	if (url_copy == NULL)
+	{
+		error(0, "malloc failed");
+		goto failed;
+	}
+
+	memcpy(url_copy, prefix, prefix_len);
+	memcpy(url_copy + prefix_len, url, range_start - url);
+	url_copy[url_len] = '\0';
+
+	state->input_url = strdup(url);
+	if (state->input_url == NULL)
+	{
+		error(0, "strdup failed");
+		goto failed;
+	}
+
+	state->curl = curl_easy_init();
+	if (!state->curl)
+	{
+		error(0, "curl_easy_init failed");
+		goto failed;
+	}
+
+	res = curl_easy_setopt(state->curl, CURLOPT_URL, url_copy);
+	if (res != CURLE_OK)
+	{
+		error(0, "curl_easy_setopt(CURLOPT_URL) failed %d", res);
+		goto failed;
+	}
+
+	res = curl_easy_setopt(state->curl, CURLOPT_WRITEFUNCTION, compressed_file_handle_data);
+	if (res != CURLE_OK)
+	{
+		error(0, "curl_easy_setopt(CURLOPT_WRITEFUNCTION) failed %d", res);
+		goto failed;
+	}
+
+	res = curl_easy_setopt(state->curl, CURLOPT_WRITEDATA, state);
+	if (res != CURLE_OK)
+	{
+		error(0, "curl_easy_setopt(CURLOPT_WRITEDATA) failed %d", res);
+		goto failed;
+	}
+
+	if (end)
+	{
+		sprintf(range, "%ld-%ld", start, end - 1);
+
+		res = curl_easy_setopt(state->curl, CURLOPT_RANGE, range);
+		if (res != CURLE_OK)
+		{
+			error(0, "curl_easy_setopt(CURLOPT_RANGE) failed %d", res);
+			goto failed;
+		}
+	}
+
+
+	rc = inflateInit2(&state->strm, 31);
+	if (rc != Z_OK)
+	{
+		error(0, "inflateInit2 failed %d", rc);
+		goto failed;
+	}
+
+	state->observer = *observer;
+	state->context = context;
+	state->cur_pos = start;
+	state->url = url_copy;
+
+	return compressed_file_get_pos(state);
+
+failed:
+
+	compressed_file_free(state);
+
+	return -1;
+}
+
+void
+compressed_file_free(compressed_file_state_t* state)
+{
+	inflateEnd(&state->strm);
+
+	curl_easy_cleanup(state->curl);
+	state->curl = NULL;
+
+	free(state->input_url);
+	state->input_url = NULL;
+
+	free(state->url);
+	state->url = NULL;
+}
+
+bool_t
+compressed_file_process(compressed_file_state_t* state)
+{
+	CURLcode res;
+	long pos;
+
+	res = curl_easy_perform(state->curl);
+	if (res != CURLE_OK)
+	{
+		if (res != CURLE_WRITE_ERROR)
+		{
+			error(0, "%s: curl error %d - %s", state->input_url, res, curl_easy_strerror(res));
+		}
+		return FALSE;
+	}
+
+	pos = compressed_file_get_pos(state);
+	if (state->state == STATE_INFLATE && pos > 0)
+	{
+		error(0, "%s: truncated file", state->input_url);
+
+		if (state->observer.segment_end)
+		{
+			state->observer.segment_end(state->context, pos, TRUE);
+		}
+	}
+
+	return TRUE;
 }

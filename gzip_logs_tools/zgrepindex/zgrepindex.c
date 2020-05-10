@@ -275,74 +275,70 @@ line_processor_process(void* context, u_char* pos, size_t size)
 }
 
 /// main
+typedef struct {
+	line_processor_state_t lines;
+	compressed_file_state_t file;
+	long segment_start;
+} index_state_t;
+
+static void
+index_resync(void* context, long pos)
+{
+	index_state_t* state = context;
+
+	state->segment_start = pos;
+	error(0, "%s: data error, trying to resync at %ld", file_name, pos);
+}
+
+static void
+index_segment_end(void* context, long pos, bool_t error)
+{
+	index_state_t* state = context;
+
+	if (pos - state->segment_start < MIN_SEGMENT_SIZE && !error)
+	{
+		return;
+	}
+
+	line_processor_print(&state->lines, state->segment_start, pos);
+
+	if (error)
+	{
+		line_processor_reset(&state->lines, FALSE);
+	}
+	else
+	{
+		line_processor_next_segment(&state->lines);
+		state->segment_start = pos;
+	}
+}
+
 static int
 process_file()
 {
-	compressed_file_state_t file_state;
-	line_processor_state_t lines_state;
-	long segment_start;
-	long cur_pos;
+	compressed_file_observer_t observer;
+	index_state_t state;
 	int result = 1;
-	int status;
 
 	// initialize
-	if (!compressed_file_init(&file_state, file_name))
+	observer.process_chunk = line_processor_process;
+	observer.resync = index_resync;
+	observer.segment_end = index_segment_end;
+
+	state.segment_start = compressed_file_init(&state.file, file_name, &observer, &state);
+	if (state.segment_start < 0)
 	{
 		return 1;
 	}
 
-	segment_start = compressed_file_get_pos(&file_state);
+	line_processor_reset(&state.lines, state.segment_start == 0);
 
-	line_processor_reset(&lines_state, segment_start == 0);
-
-	for (;;)
+	if (compressed_file_process(&state.file))
 	{
-		// process a segment
-		status = compressed_file_process_segment(&file_state, &line_processor_process, &lines_state);
-
-		// print the segment info
-		cur_pos = compressed_file_get_pos(&file_state);
-		if (cur_pos - segment_start < MIN_SEGMENT_SIZE && status == PROCESS_SUCCESS)
-		{
-			continue;
-		}
-
-		line_processor_print(&lines_state, segment_start, cur_pos);
-
-		switch (status)
-		{
-		case PROCESS_DONE:
-			result = 0;
-			// fallthrough
-
-		case PROCESS_ERROR:
-			goto done;
-
-		case PROCESS_SUCCESS:
-			// move to the next segment
-			line_processor_next_segment(&lines_state);
-			segment_start = cur_pos;
-			continue;
-
-		case PROCESS_RESYNC:
-			break;		// handled outside the switch
-		}
-
-		// resync
-		if (!compressed_file_resync(&file_state))
-		{
-			error(0, "%s: data error, didn't find start marker", file_name);
-			break;
-		}
-
-		line_processor_reset(&lines_state, FALSE);
-
-		segment_start = compressed_file_get_pos(&file_state);
-		error(0, "%s: data error, trying to resync at %ld", file_name, segment_start);
+		result = 0;
 	}
 
-done:
-	compressed_file_free(&file_state);
+	compressed_file_free(&state.file);
 	return result;
 }
 
@@ -350,6 +346,7 @@ int
 main(int argc, char **argv)
 {
 	const char *errstr;
+	CURLcode res;
 	char* pattern = "(.*)";
 	int erroff;
 	int opt;
@@ -428,7 +425,7 @@ main(int argc, char **argv)
 			error(0, "pcre_compile() failed: %s in \"%s\" at \"%s\"", errstr, pattern, pattern + erroff);
 		}
 
-		return 1;
+		return EXIT_ERROR;
 	}
 
 	regex.extra = pcre_study(regex.code, 0, &errstr);
@@ -437,16 +434,27 @@ main(int argc, char **argv)
 		error(0, "pcre_study() failed: %s", errstr);
 	}
 
+
+	// init curl
+	res = curl_global_init(CURL_GLOBAL_DEFAULT);
+	if (res != CURLE_OK)
+	{
+		error(0, "curl_global_init failed: %d", res);
+		return EXIT_ERROR;
+	}
+
 	// process the files
-	rc = 0;
+	rc = EXIT_SUCCESS;
 	while (optind < argc)
 	{
 		file_name = argv[optind++];
 		if (process_file() != 0)
 		{
-			rc = 1;
+			rc = EXIT_ERROR;
 		}
 	}
+
+	curl_global_cleanup();
 
 	return rc;
 }
