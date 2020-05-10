@@ -2,46 +2,44 @@
 #define __COMPRESSED_FILE_H__
 
 // includes
-#include <stdio.h>
+#include <curl/curl.h>
 #include <zlib.h>
 #include "common.h"
 
 // constants
-#define INPUT_CHUNK_SIZE (1048576)
 #define OUTPUT_CHUNK_SIZE (1048576)
 
-// enums
-enum {
-	PROCESS_SUCCESS,
-	PROCESS_DONE,
-	PROCESS_ERROR,
-	PROCESS_RESYNC,
-};
-
 // typedefs
-typedef void (*process_chunk_callback_t)(
-	void* context, 
-	u_char* pos, 
-	size_t size);
+typedef struct {
+
+	void (*process_chunk)(void* context, u_char* pos, size_t size);
+
+	void (*resync)(void* context, long pos);
+
+	void (*segment_end)(void* context, long pos, bool_t error);
+} compressed_file_observer_t;
 
 typedef struct {
-	char* file_name;
-	FILE* source;
-	long limit;
+	char* url;
+	char* input_url;
+	compressed_file_observer_t observer;
+	void* context;
+
+	int state;
+	long cur_pos;
+	unsigned short last_word;
+
+	CURL* curl;
 	z_stream strm;
-	u_char in[INPUT_CHUNK_SIZE];
+
 	u_char out[OUTPUT_CHUNK_SIZE];
 } compressed_file_state_t;
 
 // functions
-bool_t compressed_file_init(compressed_file_state_t* state, const char* file_name);
+long compressed_file_init(compressed_file_state_t* state, const char* url, compressed_file_observer_t* observer, void* context);
 
 void compressed_file_free(compressed_file_state_t* state);
 
-long compressed_file_get_pos(compressed_file_state_t* state);
-
-int compressed_file_process_segment(compressed_file_state_t* state, process_chunk_callback_t callback, void* context);
-
-int compressed_file_resync(compressed_file_state_t* state);
+bool_t compressed_file_process(compressed_file_state_t* state);
 
 #endif // __COMPRESSED_FILE_H__
