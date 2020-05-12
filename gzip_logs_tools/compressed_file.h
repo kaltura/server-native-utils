@@ -4,7 +4,7 @@
 // includes
 #include <curl/curl.h>
 #include <zlib.h>
-#include "common.h"
+#include "curl_ext.h"
 
 // constants
 #define OUTPUT_CHUNK_SIZE (1048576)
@@ -32,11 +32,13 @@ typedef struct {
 	CURL* curl;
 	z_stream strm;
 
+	curl_ext_ctx_t curl_ext;
+
 	u_char out[OUTPUT_CHUNK_SIZE];
 } compressed_file_state_t;
 
 // functions
-long compressed_file_init(compressed_file_state_t* state, const char* url, compressed_file_observer_t* observer, void* context);
+long compressed_file_init(compressed_file_state_t* state, curl_ext_conf_t* conf, const char* url, compressed_file_observer_t* observer, void* context);
 
 void compressed_file_free(compressed_file_state_t* state);
 

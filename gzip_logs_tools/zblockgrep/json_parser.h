@@ -4,6 +4,7 @@
 // includes
 #include <sys/types.h>
 #include <stdint.h>
+#include "../common.h"
 
 // enums
 enum {
@@ -25,14 +26,8 @@ enum {
 };
 
 // typedefs
-typedef intptr_t bool_t;
 typedef intptr_t json_status_t;
 typedef void pool_t;
-
-typedef struct {
-	size_t len;
-	char *data;
-} str_t;
 
 typedef struct {
 	int64_t num;

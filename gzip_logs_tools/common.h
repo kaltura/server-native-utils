@@ -16,10 +16,21 @@
 #endif
 
 // macros
+#define array_entries(x) (sizeof(x) / sizeof(x[0]))
 #define min(x, y) (((x) < (y)) ? (x) : (y))
+
+#define mem_copy(dst, src, n)	(((char *) memcpy(dst, src, n)) + (n))
+#define mem_copy_str(dst, src)	mem_copy(dst, (src).data, (src).len)
+#define str_init(str)			{ sizeof(str) - 1, (char *) str }
+#define str_f(str)				(int)(str).len, (str).data
 
 // typedefs
 typedef intptr_t bool_t;
+
+typedef struct {
+	size_t len;
+	char* data;
+} str_t;
 
 // globals
 extern char* program_name;
