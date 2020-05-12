@@ -113,7 +113,7 @@ compressed_file_resync(compressed_file_state_t* state)
 		saved_next_in = state->strm.next_in;
 		saved_avail_in = state->strm.avail_in;
 
-		state->strm.next_in = (void *)&sync_word;
+		state->strm.next_in = (void*)&sync_word;
 		state->strm.avail_in = sizeof(sync_word);
 		state->strm.next_out = state->out;
 		state->strm.avail_out = sizeof(state->out);
@@ -139,7 +139,7 @@ compressed_file_resync(compressed_file_state_t* state)
 }
 
 static size_t
-compressed_file_handle_data(void *buf, size_t mbr_size, size_t mbr_count, void *data)
+compressed_file_handle_data(void* buf, size_t mbr_size, size_t mbr_count, void* data)
 {
 	compressed_file_state_t* state = data;
 	size_t size = mbr_size * mbr_count;
@@ -173,14 +173,14 @@ compressed_file_handle_data(void *buf, size_t mbr_size, size_t mbr_count, void *
 	return size;
 }
 
-
 long
-compressed_file_init(compressed_file_state_t* state, const char* url, compressed_file_observer_t* observer, void* context)
+compressed_file_init(compressed_file_state_t* state, curl_ext_conf_t* conf, const char* url, compressed_file_observer_t* observer, void* context)
 {
 	const char* range_start;
 	const char* scheme_end;
 	const char* prefix;
 	CURLcode res;
+	str_t url_str;
 	char range[64];
 	char* url_copy;
 	long prefix_len;
@@ -223,23 +223,6 @@ compressed_file_init(compressed_file_state_t* state, const char* url, compressed
 
 
 	url_len = prefix_len + range_start - url;
-	url_copy = malloc(url_len + 1);
-	if (url_copy == NULL)
-	{
-		error(0, "malloc failed");
-		goto failed;
-	}
-
-	memcpy(url_copy, prefix, prefix_len);
-	memcpy(url_copy + prefix_len, url, range_start - url);
-	url_copy[url_len] = '\0';
-
-	state->input_url = strdup(url);
-	if (state->input_url == NULL)
-	{
-		error(0, "strdup failed");
-		goto failed;
-	}
 
 	state->curl = curl_easy_init();
 	if (!state->curl)
@@ -248,11 +231,36 @@ compressed_file_init(compressed_file_state_t* state, const char* url, compressed
 		goto failed;
 	}
 
-	res = curl_easy_setopt(state->curl, CURLOPT_URL, url_copy);
-	if (res != CURLE_OK)
+	url_str.data = (char*)url;
+	url_str.len = range_start - url;
+
+	if (!curl_ext_ctx_init(&state->curl_ext, conf, &url_str, state->curl))
 	{
-		error(0, "curl_easy_setopt(CURLOPT_URL) failed %d", res);
 		goto failed;
+	}
+
+	if (state->curl_ext.ctx == NULL)
+	{
+		// no curl extension - set the url as is
+		url_copy = malloc(url_len + 1);
+		if (url_copy == NULL)
+		{
+			error(0, "malloc failed");
+			goto failed;
+		}
+
+		memcpy(url_copy, prefix, prefix_len);
+		memcpy(url_copy + prefix_len, url, range_start - url);
+		url_copy[url_len] = '\0';
+
+		state->url = url_copy;
+
+		res = curl_easy_setopt(state->curl, CURLOPT_URL, url_copy);
+		if (res != CURLE_OK)
+		{
+			error(0, "curl_easy_setopt(CURLOPT_URL) failed %d", res);
+			goto failed;
+		}
 	}
 
 	res = curl_easy_setopt(state->curl, CURLOPT_WRITEFUNCTION, compressed_file_handle_data);
@@ -281,6 +289,12 @@ compressed_file_init(compressed_file_state_t* state, const char* url, compressed
 		}
 	}
 
+	state->input_url = strdup(url);
+	if (state->input_url == NULL)
+	{
+		error(0, "strdup failed");
+		goto failed;
+	}
 
 	rc = inflateInit2(&state->strm, 31);
 	if (rc != Z_OK)
@@ -292,7 +306,6 @@ compressed_file_init(compressed_file_state_t* state, const char* url, compressed
 	state->observer = *observer;
 	state->context = context;
 	state->cur_pos = start;
-	state->url = url_copy;
 
 	return compressed_file_get_pos(state);
 
@@ -308,20 +321,23 @@ compressed_file_free(compressed_file_state_t* state)
 {
 	inflateEnd(&state->strm);
 
-	curl_easy_cleanup(state->curl);
-	state->curl = NULL;
-
 	free(state->input_url);
 	state->input_url = NULL;
 
 	free(state->url);
 	state->url = NULL;
+
+	curl_ext_ctx_free(&state->curl_ext);
+
+	curl_easy_cleanup(state->curl);
+	state->curl = NULL;
 }
 
 bool_t
 compressed_file_process(compressed_file_state_t* state)
 {
 	CURLcode res;
+	long code;
 	long pos;
 
 	res = curl_easy_perform(state->curl);
@@ -331,6 +347,19 @@ compressed_file_process(compressed_file_state_t* state)
 		{
 			error(0, "%s: curl error %d - %s", state->input_url, res, curl_easy_strerror(res));
 		}
+		return FALSE;
+	}
+
+	res = curl_easy_getinfo(state->curl, CURLINFO_RESPONSE_CODE, &code);
+	if (res != CURLE_OK)
+	{
+		error(0, "curl_easy_getinfo(CURLINFO_RESPONSE_CODE) failed %d", res);
+		return FALSE;
+	}
+
+	if (code != 0 && (code < 200 || code >= 300))
+	{
+		error(0, "invalid status code %ld", code);
 		return FALSE;
 	}
 

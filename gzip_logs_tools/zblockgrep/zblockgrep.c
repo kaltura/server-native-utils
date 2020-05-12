@@ -36,9 +36,10 @@ static size_t block_delimiter_len = 0;
 static const char* time_format = "%Y-%m-%d %H:%M:%S";
 
 // constants
-static char const short_options[] = "p:t:c:f:d:hH";
+static char const short_options[] = "i:p:t:c:f:d:hH";
 static struct option const long_options[] =
 {
+	{"ini", required_argument, NULL, 'i'},
 	{"pattern", required_argument, NULL, 'p'},
 	{"time-format", required_argument, NULL, 't'},
 	{"capture-conditions", required_argument, NULL, 'c'},
@@ -750,7 +751,7 @@ line_processor_process(void* context, u_char* pos, size_t size)
 
 /// main
 static int
-process_file(const char* file_name, int file_name_prefix)
+process_file(curl_ext_conf_t* conf, const char* file_name, int file_name_prefix)
 {
 	compressed_file_observer_t observer;
 	compressed_file_state_t compressed_file_state;
@@ -765,7 +766,7 @@ process_file(const char* file_name, int file_name_prefix)
 	memset(&observer, 0, sizeof(observer));
 	observer.process_chunk = &line_processor_process;
 
-	file_pos = compressed_file_init(&compressed_file_state, file_name, &observer, &line_state);
+	file_pos = compressed_file_init(&compressed_file_state, conf, file_name, &observer, &line_state);
 	if (file_pos < 0)
 	{
 		return 1;
@@ -854,6 +855,7 @@ Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' -c '$1>=12:34:56' input.log.gz\n\
                             matched against each block, more details below.\n\
   -d, --block-delimiter     a string that is printed in a separate line\n\
                             following each identified block.\n\
+  -i, --ini                 sets an ini file containing request params.\n\
 ");
 
 		printf ("\n\
@@ -901,6 +903,8 @@ following types are supported:\n\
 int
 main(int argc, char **argv)
 {
+	curl_ext_conf_t* conf;
+	const char *conf_file = NULL;
 	const char *errstr;
 	CURLcode res;
 	char* pattern = "^.";
@@ -968,6 +972,10 @@ main(int argc, char **argv)
 			block_delimiter[block_delimiter_len++] = '\n';
 			break;
 
+		case 'i':
+			conf_file = optarg;
+			break;
+
 		case 0:
 			// long options
 			break;
@@ -1030,15 +1038,23 @@ main(int argc, char **argv)
 		return EXIT_ERROR;
 	}
 
+	conf = curl_ext_conf_init(conf_file);
+	if (conf == NULL)
+	{
+		return EXIT_ERROR;
+	}
+
 	// process the files
 	rc = EXIT_SUCCESS;
 	while (optind < argc)
 	{
-		if (process_file(argv[optind++], prefix_mode == PM_WITH_FILENAME) != 0)
+		if (process_file(conf, argv[optind++], prefix_mode == PM_WITH_FILENAME) != 0)
 		{
 			rc = EXIT_ERROR;
 		}
 	}
+
+	curl_ext_conf_free(conf);
 
 	curl_global_cleanup();
 

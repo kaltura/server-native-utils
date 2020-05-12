@@ -41,12 +41,13 @@ typedef struct {
 } regex_t;
 
 // constants
-static char const short_options[] = "p:t:c:";
+static char const short_options[] = "p:t:c:i:";
 static struct option const long_options[] =
 {
 	{"pattern", required_argument, NULL, 'p'},
 	{"time-format", required_argument, NULL, 't'},
 	{"capture-expression", required_argument, NULL, 'c'},
+	{"ini", required_argument, NULL, 'i'},
 	{0, 0, 0, 0}
 };
 
@@ -69,7 +70,7 @@ usage(int status)
 		fprintf (stderr, "Try '%s --help' for more information.\n", program_name);
 	}
 	else
-    {
+	{
       printf ("Usage: %s [OPTION]... [FILE]...\n", program_name);
       printf ("\
 Creates an index of gzip chunks for the given files.\n");
@@ -88,6 +89,7 @@ Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' input.log.gz\n\
   -t, --time-format         parse the pattern match using the specified\n\
                             strptime format. when not provided, string\n\
                             comparison is used to compare timestamps\n\
+  -i, --ini                 sets an ini file containing request params.\n\
 ");
 	}
 	exit(status);
@@ -314,7 +316,7 @@ index_segment_end(void* context, long pos, bool_t error)
 }
 
 static int
-process_file()
+process_file(curl_ext_conf_t* conf)
 {
 	compressed_file_observer_t observer;
 	index_state_t state;
@@ -325,7 +327,7 @@ process_file()
 	observer.resync = index_resync;
 	observer.segment_end = index_segment_end;
 
-	state.segment_start = compressed_file_init(&state.file, file_name, &observer, &state);
+	state.segment_start = compressed_file_init(&state.file, conf, file_name, &observer, &state);
 	if (state.segment_start < 0)
 	{
 		return 1;
@@ -345,6 +347,8 @@ process_file()
 int
 main(int argc, char **argv)
 {
+	curl_ext_conf_t* conf;
+	const char *conf_file = NULL;
 	const char *errstr;
 	CURLcode res;
 	char* pattern = "(.*)";
@@ -384,6 +388,10 @@ main(int argc, char **argv)
 				time_format = optarg;
 				break;
 
+			case 'i':
+				conf_file = optarg;
+				break;
+
 			case 0:
 				// long options
 				break;
@@ -400,7 +408,7 @@ main(int argc, char **argv)
 	}
 
 	if (optind + 1 > argc)
-    {
+	{
 		usage(EXIT_SUCCESS);
 	}
 
@@ -443,16 +451,24 @@ main(int argc, char **argv)
 		return EXIT_ERROR;
 	}
 
+	conf = curl_ext_conf_init(conf_file);
+	if (conf == NULL)
+	{
+		return EXIT_ERROR;
+	}
+
 	// process the files
 	rc = EXIT_SUCCESS;
 	while (optind < argc)
 	{
 		file_name = argv[optind++];
-		if (process_file() != 0)
+		if (process_file(conf) != 0)
 		{
 			rc = EXIT_ERROR;
 		}
 	}
+
+	curl_ext_conf_free(conf);
 
 	curl_global_cleanup();
 

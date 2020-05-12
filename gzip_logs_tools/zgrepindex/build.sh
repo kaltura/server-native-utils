@@ -1,1 +1,1 @@
-gcc -g -O2 -Wall -o zgrepindex zgrepindex.c ../compressed_file.c ../capture_expression.c ../common.c -lz -lpcre -lcurl
+gcc -g -O2 -Wall -o zgrepindex zgrepindex.c ../compressed_file.c ../curl_ext.c ../curl_ext_s3.c ../capture_expression.c ../common.c ../inih/ini.c -I../inih/ -lz -lpcre -lcurl -lcrypto
