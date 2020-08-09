@@ -23,6 +23,7 @@ typedef long long longlong;
 #endif
 #include <mysql.h>
 #include <ctype.h>
+#include <signal.h>
 
 #ifdef _WIN32
 /* inet_aton needs winsock library */
