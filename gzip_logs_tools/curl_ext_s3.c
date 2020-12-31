@@ -17,6 +17,8 @@
 #define CURL_EXT_S3_EMPTY_SHA256	\
 	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
+#define CURL_EXT_S3_SECURITY_TOKEN  ("X-Amz-Security-Token: ")
+
 #define COMPESSED_FILE_S3_AMZ_DATE_HEADER "X-Amz-Date: %.*s"
 #define COMPESSED_FILE_S3_AMZ_DATE_HEADER_LEN \
 	sizeof(COMPESSED_FILE_S3_AMZ_DATE_HEADER) + CURL_EXT_S3_AMZ_TIME_LEN
@@ -30,6 +32,7 @@ typedef struct {
 	str_t region;
 	str_t access_key;
 	str_t secret_key;
+	str_t security_token;
 
 	str_t key_scope;
 	str_t signing_key;
@@ -150,7 +153,6 @@ curl_ext_s3_conf_handler(void* c, const char* name, const char* value)
 	curl_ext_s3_conf_t* conf = c;
 	str_t* dest;
 
-	dest = NULL;
 	if (strcasecmp(name, "region") == 0)
 	{
 		dest = &conf->region;
@@ -163,8 +165,11 @@ curl_ext_s3_conf_handler(void* c, const char* name, const char* value)
 	{
 		dest = &conf->secret_key;
 	}
-
-	if (dest == NULL)
+	else if (strcasecmp(name, "security_token") == 0)
+	{
+		dest = &conf->security_token;
+	}
+	else
 	{
 		return 1;
 	}
@@ -280,6 +285,7 @@ curl_ext_s3_conf_free(void* c)
 	free(conf->region.data);
 	free(conf->access_key.data);
 	free(conf->secret_key.data);
+	free(conf->security_token.data);
 	free(conf);
 }
 
@@ -402,6 +408,8 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 	str_t host;
 	str_t auth;
 	str_t uri;
+	char *header;
+	char *p;
 	time_t t;
 
 	char date_buf[CURL_EXT_S3_AMZ_TIME_LEN];
@@ -502,6 +510,34 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 		goto failed;
 	}
 	ctx->headers = headers;
+
+	// security-token header
+	if (conf->security_token.len > 0)
+	{
+		header = malloc(sizeof(CURL_EXT_S3_SECURITY_TOKEN) +
+			conf->security_token.len);
+		if (header == NULL)
+		{
+			error(0, "failed to alloc security token");
+			goto failed;
+		}
+
+		p = mem_copy(header, CURL_EXT_S3_SECURITY_TOKEN,
+			sizeof(CURL_EXT_S3_SECURITY_TOKEN) - 1);
+		p = mem_copy_str(p, conf->security_token);
+		*p = '\0';
+
+		headers = curl_slist_append(ctx->headers, header);
+
+		free(header);
+
+		if (headers == NULL)
+		{
+			error(0, "curl_slist_append failed (4)");
+			goto failed;
+		}
+		ctx->headers = headers;
+	}
 
 	// set headers
 	res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, ctx->headers);
