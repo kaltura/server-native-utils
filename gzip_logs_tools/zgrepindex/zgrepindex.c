@@ -281,6 +281,7 @@ typedef struct {
 	line_processor_state_t lines;
 	compressed_file_state_t file;
 	long segment_start;
+	long segment_end;
 } index_state_t;
 
 static void
@@ -288,7 +289,7 @@ index_resync(void* context, long pos)
 {
 	index_state_t* state = context;
 
-	state->segment_start = pos;
+	state->segment_start = state->segment_end = pos;
 	error(0, "%s: data error, trying to resync at %ld", file_name, pos);
 }
 
@@ -296,6 +297,8 @@ static void
 index_segment_end(void* context, long pos, bool_t error)
 {
 	index_state_t* state = context;
+
+	state->segment_end = pos;
 
 	if (pos - state->segment_start < MIN_SEGMENT_SIZE && !error)
 	{
@@ -311,8 +314,9 @@ index_segment_end(void* context, long pos, bool_t error)
 	else
 	{
 		line_processor_next_segment(&state->lines);
-		state->segment_start = pos;
 	}
+
+	state->segment_start = pos;
 }
 
 static int
@@ -333,11 +337,18 @@ process_file(curl_ext_conf_t* conf)
 		return 1;
 	}
 
+	state.segment_end = state.segment_start;
+
 	line_processor_reset(&state.lines, state.segment_start == 0);
 
 	if (compressed_file_process(&state.file))
 	{
 		result = 0;
+	}
+
+	if (state.segment_start < state.segment_end)
+	{
+		line_processor_print(&state.lines, state.segment_start, state.segment_end);
 	}
 
 	compressed_file_free(&state.file);
