@@ -23,6 +23,8 @@
 #define mem_copy_str(dst, src)	mem_copy(dst, (src).data, (src).len)
 #define str_init(str)			{ sizeof(str) - 1, (char *) str }
 #define str_f(str)				(int)(str).len, (str).data
+#define str_set(str, text)                                               \
+    (str)->len = sizeof(text) - 1; (str)->data = (char *) text
 
 // typedefs
 typedef intptr_t bool_t;
