@@ -19,13 +19,15 @@
 
 #define CURL_EXT_S3_SECURITY_TOKEN  ("X-Amz-Security-Token: ")
 
+#define CURL_EXT_S3_SECURITY_TOKEN_CANON  ("x-amz-security-token:")
+
 #define COMPESSED_FILE_S3_AMZ_DATE_HEADER "X-Amz-Date: %.*s"
 #define COMPESSED_FILE_S3_AMZ_DATE_HEADER_LEN \
 	sizeof(COMPESSED_FILE_S3_AMZ_DATE_HEADER) + CURL_EXT_S3_AMZ_TIME_LEN
 
 #define COMPESSED_FILE_S3_HOST "%.*s.s3.%.*s.amazonaws.com"
 
-#define COMPESSED_FILE_S3_SCHEME "http://"
+#define COMPESSED_FILE_S3_SCHEME "https://"
 
 
 typedef struct {
@@ -290,6 +292,56 @@ curl_ext_s3_conf_free(void* c)
 }
 
 static bool_t
+curl_ext_s3_get_canonical_headers(curl_ext_s3_conf_t* conf,
+	str_t* host, str_t* date, str_t* canonical_headers, str_t* signed_headers)
+{
+	static const char canonical_headers_template[] =
+		"host:%.*s\n"
+		"x-amz-content-sha256:" CURL_EXT_S3_EMPTY_SHA256 "\n"
+		"x-amz-date:%.*s\n";
+
+	char* p;
+	size_t size;
+
+	size = sizeof(canonical_headers_template) + host->len + date->len;
+	if (conf->security_token.len > 0)
+	{
+		size += sizeof(CURL_EXT_S3_SECURITY_TOKEN_CANON) - 1 +
+			conf->security_token.len + 1;
+	}
+
+	p = malloc(size);
+	if (p == NULL)
+	{
+		error(0, "canonical headers alloc failed");
+		return FALSE;
+	}
+
+	canonical_headers->data = p;
+
+	p += sprintf(p, canonical_headers_template, str_f(*host), str_f(*date));
+
+	if (conf->security_token.len > 0)
+	{
+		p = mem_copy(p, CURL_EXT_S3_SECURITY_TOKEN_CANON,
+			sizeof(CURL_EXT_S3_SECURITY_TOKEN_CANON) - 1);
+		p = mem_copy_str(p, conf->security_token);
+		*p++ = '\n';
+
+		str_set(signed_headers,
+			"host;x-amz-content-sha256;x-amz-date;x-amz-security-token");
+	}
+	else
+	{
+		str_set(signed_headers, "host;x-amz-content-sha256;x-amz-date");
+	}
+
+	canonical_headers->len = p - canonical_headers->data;
+
+	return TRUE;
+}
+
+static bool_t
 curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 	str_t* host, str_t* uri, str_t* date, str_t* result)
 {
@@ -297,11 +349,8 @@ curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 		"GET\n"
 		"%.*s\n"
 		"\n"
-		"host:%.*s\n"
-		"x-amz-content-sha256:" CURL_EXT_S3_EMPTY_SHA256 "\n"
-		"x-amz-date:%.*s\n"
-		"\n"
-		"host;x-amz-content-sha256;x-amz-date\n"
+		"%.*s\n"
+		"%.*s\n"
 		CURL_EXT_S3_EMPTY_SHA256;
 
 	static const char string_to_sign_template[] =
@@ -312,11 +361,13 @@ curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 
 	static const char authorization_header_template[] =
 		"Authorization: AWS4-HMAC-SHA256 Credential=%.*s/%.*s, "
-		"SignedHeaders=host;x-amz-content-sha256;x-amz-date, "
+		"SignedHeaders=%.*s, "
 		"Signature=%.*s";
 
+	str_t canonical_headers;
 	str_t canonical_request;
 	str_t canonical_sha;
+	str_t signed_headers;
 	str_t string_to_sign;
 	str_t signature;
 	bool_t rc = FALSE;
@@ -325,10 +376,19 @@ curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 	char signature_buf[CURL_EXT_S3_HMAC_HEX_LEN];
 
 	string_to_sign.data = NULL;
+	canonical_request.data = NULL;
+	canonical_headers.data = NULL;
 
-	// canonical requets
+	// canonical headers
+	if (!curl_ext_s3_get_canonical_headers(conf, host, date,
+		&canonical_headers, &signed_headers))
+	{
+		goto done;
+	}
+
+	// canonical request
 	canonical_request.data = malloc(sizeof(canonical_request_template) +
-		uri->len + host->len + date->len);
+		uri->len + canonical_headers.len + signed_headers.len);
 	if (canonical_request.data == NULL)
 	{
 		error(0, "canonical request alloc failed");
@@ -336,7 +396,8 @@ curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 	}
 
 	canonical_request.len = sprintf(canonical_request.data,
-		canonical_request_template, str_f(*uri), str_f(*host), str_f(*date));
+		canonical_request_template, str_f(*uri), str_f(canonical_headers),
+		str_f(signed_headers));
 
 	curl_ext_s3_sha256_hex_buf(&canonical_request, canonical_sha_buf);
 
@@ -365,7 +426,8 @@ curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 
 	// auth header
 	result->data = malloc(sizeof(authorization_header_template) +
-		conf->access_key.len + conf->key_scope.len + signature.len);
+		conf->access_key.len + conf->key_scope.len + signed_headers.len +
+		signature.len);
 	if (result->data == NULL)
 	{
 		error(0, "authorization alloc failed");
@@ -373,7 +435,8 @@ curl_ext_s3_get_auth_header(curl_ext_s3_conf_t* conf,
 	}
 
 	result->len = sprintf(result->data, authorization_header_template,
-		str_f(conf->access_key), str_f(conf->key_scope), str_f(signature));
+		str_f(conf->access_key), str_f(conf->key_scope), str_f(signed_headers),
+		str_f(signature));
 
 	rc = TRUE;
 
@@ -381,6 +444,7 @@ done:
 
 	free(string_to_sign.data);
 	free(canonical_request.data);
+	free(canonical_headers.data);
 
 	return rc;
 }
