@@ -15,24 +15,29 @@ FILTER_EXCLUDE = 'E'
 ZBLOCKGREP_BIN = '/opt/server-native-utils/gzip_logs_tools/zblockgrep/zblockgrep'
 CRED_REFRESH = 1800
 
-cred_file = None
-def get_cred_ini(session):
-    global cred_file, cred_time
+cred_file = '/tmp/s3.%s.ini' % os.getpid()
+cred_last = None
 
-    cur_time = time.time()
-    if cred_file is None:
-        cred_file = '/tmp/s3.%s.ini' % os.getpid()
-    elif cur_time - cred_time < CRED_REFRESH:
-        return cred_file
-    cred_time = cur_time
+def get_cred_ini(session):
+    global cred_file, cred_last
 
     cred = session.get_credentials()
     cred = cred.get_frozen_credentials()
-    data = '[s3]\nregion=%s\naccess_key=%s\nsecret_key=%s\nsecurity_token=%s' % \
-        (options.region, cred.access_key, cred.secret_key, cred.token)
 
-    with open(cred_file, 'wb') as f:
+    data = '[s3]\nregion=%s\naccess_key=%s\nsecret_key=%s\nsecurity_token=%s\n' % \
+        (options.region, cred.access_key, cred.secret_key, cred.token)
+    if data == cred_last:
+        return cred_file
+
+    if options.verbose:
+        sys.stderr.write('Updating credentials\n')
+
+    temp_cred_file = cred_file + '.tmp'
+    with open(temp_cred_file, 'wb') as f:
         f.write(data)
+    os.rename(temp_cred_file, cred_file)
+
+    cred_last = data
     return cred_file
 
 def del_cred_ini():
@@ -81,7 +86,7 @@ parser.add_option('-v', '--verbose', dest='verbose', action='store_true',
     help='generate more verbose output')
 
 # aws options
-parser.add_option('-P', '--profile', dest='profile', default='buckets',
+parser.add_option('-f', '--profile', dest='profile', default='buckets',
     help='aws profile name [default: %default]', metavar='PROFILE')
 parser.add_option('-R', '--region', dest='region', default='us-east-1',
     help='aws region name [default: %default]')
@@ -109,6 +114,9 @@ parser.add_option('-H', '--with-filename', dest='with_filename',
     action='store_true', help='print the file name for each match')
 parser.add_option('-i', '--ignore-case', dest='ignore_case', default=False,
     action='store_true', help='ignore case distinctions')
+parser.add_option('-P', '--perl-regexp', dest='pcre', default=False,
+    action='store_true', help='PATTERN is a Perl regular expression')
+
 parser.add_option('-m', '--max-processes', dest='max_processes', type='int',
     default=4, help='maximum number of processes to spawn [default: %default]',
     metavar='COUNT')
@@ -161,11 +169,18 @@ if os.path.exists(ZBLOCKGREP_BIN):
     if options.verbose:
         sys.stderr.write('Using zblockgrep...\n')
 
-    filter = {
-        'type': 'match',
-        'text': pattern,
-        'ignorecase': options.ignore_case
-    }
+    if options.pcre:
+        filter = {
+            'type': 'regex',
+            'pattern': pattern,
+            'ignorecase': options.ignore_case
+        }
+    else:
+        filter = {
+            'type': 'match',
+            'text': pattern,
+            'ignorecase': options.ignore_case
+        }
 
     grep_options = " -f '%s'" % json.dumps(filter)
     if output_filename:
@@ -179,6 +194,8 @@ else:
     grep_options = ''
     if options.ignore_case:
         grep_options += ' -i'
+    if options.pcre:
+        grep_options += ' -P'
 
 
 # run the grep commands
