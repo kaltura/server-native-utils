@@ -114,6 +114,12 @@ parser.add_option('-H', '--with-filename', dest='with_filename',
     action='store_true', help='print the file name for each match')
 parser.add_option('-i', '--ignore-case', dest='ignore_case', default=False,
     action='store_true', help='ignore case distinctions')
+parser.add_option('-A', '--after-context', dest='after_context', type='int',
+    help='Print NUM lines of trailing context after matching lines', metavar='NUM')
+parser.add_option('-B', '--before-context', dest='before_context', type='int',
+    help='Print NUM lines of leading context before matching lines', metavar='NUM')
+parser.add_option('-C', '--context', dest='context', type='int',
+    help='Print NUM lines of output context', metavar='NUM')
 parser.add_option('-P', '--perl-regexp', dest='pcre', default=False,
     action='store_true', help='PATTERN is a Perl regular expression')
 
@@ -165,9 +171,8 @@ elif options.no_filename:
 else:
     output_filename = len(file_list) > 1
 
-if os.path.exists(ZBLOCKGREP_BIN):
-    if options.verbose:
-        sys.stderr.write('Using zblockgrep...\n')
+if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
+    and not options.before_context and not options.context):
 
     if options.pcre:
         filter = {
@@ -185,18 +190,26 @@ if os.path.exists(ZBLOCKGREP_BIN):
     grep_options = " -f '%s'" % json.dumps(filter)
     if output_filename:
         grep_options += ' -H'
-else:
-    if options.verbose:
-        sys.stderr.write('Using grep...\n')
 
+    if options.verbose:
+        sys.stderr.write('Using: zblockgrep%s\n' % grep_options)
+else:
     ZBLOCKGREP_BIN = False
 
     grep_options = ''
     if options.ignore_case:
         grep_options += ' -i'
+    if options.after_context:
+        grep_options += ' -A%s' % options.after_context
+    if options.before_context:
+        grep_options += ' -B%s' % options.before_context
+    if options.context:
+        grep_options += ' -C%s' % options.context
     if options.pcre:
         grep_options += ' -P'
 
+    if options.verbose:
+        sys.stderr.write('Using: grep%s\n' % grep_options)
 
 # run the grep commands
 processes = set()
