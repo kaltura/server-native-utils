@@ -2,11 +2,13 @@ from optparse import OptionParser
 import subprocess
 import botocore
 import datetime
+import hashlib
 import fnmatch
 import os.path
 import boto3
 import json
 import time
+import zlib
 import sys
 
 FILTER_INCLUDE = 'I'
@@ -15,11 +17,15 @@ FILTER_EXCLUDE = 'E'
 ZBLOCKGREP_BIN = '/opt/server-native-utils/gzip_logs_tools/zblockgrep/zblockgrep'
 CRED_REFRESH = 1800
 
-cred_file = '/tmp/s3.%s.ini' % os.getpid()
+CRED_FILE = '/tmp/s3grep.%s.ini' % os.getpid()
+
+CACHE_FILE = '/tmp/s3grep.%s.cache'
+CACHE_EXPIRY = 1800
+
 cred_last = None
 
-def get_cred_ini(session):
-    global cred_file, cred_last
+def update_cred_ini(session):
+    global cred_last
 
     cred = session.get_credentials()
     cred = cred.get_frozen_credentials()
@@ -27,24 +33,23 @@ def get_cred_ini(session):
     data = '[s3]\nregion=%s\naccess_key=%s\nsecret_key=%s\nsecurity_token=%s\n' % \
         (options.region, cred.access_key, cred.secret_key, cred.token)
     if data == cred_last:
-        return cred_file
+        return
 
     if options.verbose:
         sys.stderr.write('Updating credentials\n')
 
-    temp_cred_file = cred_file + '.tmp'
+    temp_cred_file = CRED_FILE + '.tmp'
     with open(temp_cred_file, 'wb') as f:
         f.write(data)
-    os.rename(temp_cred_file, cred_file)
+    os.rename(temp_cred_file, CRED_FILE)
 
     cred_last = data
-    return cred_file
 
 def del_cred_ini():
-    global cred_file
-
-    if cred_file is not None:
-        os.remove(cred_file)
+    try:
+        os.remove(CRED_FILE)
+    except OSError:
+        pass
 
 def apply_filter(key, filter):
     base_key = os.path.basename(key)
@@ -153,10 +158,33 @@ session = boto3.Session(profile_name=options.profile)
 s3 = session.client('s3')
 
 delimiter = '' if options.recursive else '/'
-if options.verbose:
-    sys.stderr.write('Listing objects...\n')
+
+cache_key = [options.profile, bucket_name, prefix, options.filter, delimiter]
+m = hashlib.md5()
+m.update(json.dumps(cache_key))
+cache_file = CACHE_FILE % m.hexdigest()
+
 start = time.time()
-file_list = list(s3, bucket_name, prefix, options.filter, delimiter)
+
+try:
+    cache_time = os.path.getmtime(cache_file)
+except:
+    cache_time = 0
+
+if time.time() - cache_time < CACHE_EXPIRY:
+    if options.verbose:
+        sys.stderr.write('Loading from cache...\n')
+    with open(cache_file, 'rb') as f:
+        data = f.read()
+    file_list = json.loads(zlib.decompress(data))
+else:
+    if options.verbose:
+        sys.stderr.write('Listing objects...\n')
+    file_list = list(s3, bucket_name, prefix, options.filter, delimiter)
+
+    data = zlib.compress(json.dumps(file_list))
+    with open(cache_file, 'wb') as f:
+        f.write(data)
 
 if options.verbose:
     total_size = sum(map(lambda x: x[0], file_list))
@@ -226,7 +254,8 @@ for size, prefix in file_list:
     path = 's3://%s/%s' % (bucket_name, prefix)
 
     if ZBLOCKGREP_BIN:
-        cmd = '%s --ini %s %s %s' % (ZBLOCKGREP_BIN, get_cred_ini(session),
+        update_cred_ini(session)
+        cmd = '%s --ini %s %s %s' % (ZBLOCKGREP_BIN, CRED_FILE,
             grep_options, path)
         if options.pipe is not None:
             cmd += ' | %s' % options.pipe
