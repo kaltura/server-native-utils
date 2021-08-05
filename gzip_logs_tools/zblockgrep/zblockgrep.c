@@ -1,8 +1,11 @@
 #define _XOPEN_SOURCE 700		// required for strptime
 typedef unsigned char u_char;
 
+#include <sys/sysinfo.h>
+#include <pthread.h>
 #include <getopt.h>
 #include <string.h>
+#include <sched.h>
 #include <time.h>
 #include <pcre.h>
 #include "../compressed_file.h"
@@ -26,6 +29,18 @@ typedef struct {
 	pcre_extra *extra;
 } regex_t;
 
+typedef struct {
+	pthread_t thread;
+
+	char** files;
+	long start;
+	long max;
+	long increment;
+
+	int file_name_prefix;
+	curl_ext_conf_t* conf;
+} thread_ctx_t;
+
 // globals
 static int show_help = 0;
 
@@ -36,7 +51,7 @@ static size_t block_delimiter_len = 0;
 static const char* time_format = "%Y-%m-%d %H:%M:%S";
 
 // constants
-static char const short_options[] = "i:p:t:c:f:d:hH";
+static char const short_options[] = "i:p:t:c:f:d:T:hH";
 static struct option const long_options[] =
 {
 	{"ini", required_argument, NULL, 'i'},
@@ -45,6 +60,7 @@ static struct option const long_options[] =
 	{"capture-conditions", required_argument, NULL, 'c'},
 	{"filter", required_argument, NULL, 'f'},
 	{"block-delimiter", required_argument, NULL, 'd'},
+	{"max-threads", required_argument, NULL, 'T'},
 	{"no-filename", no_argument, NULL, 'h'},
 	{"with-filename", no_argument, NULL, 'H'},
 	{"help", no_argument, &show_help, 1},
@@ -461,6 +477,61 @@ capture_conditions_eval(const char* buffer, int* captures, int exec_result)
 	return TRUE;
 }
 
+
+/// spinlock implementation from nginx
+typedef intptr_t        ngx_int_t;
+typedef uintptr_t       ngx_uint_t;
+
+typedef long                        ngx_atomic_int_t;
+typedef unsigned long               ngx_atomic_uint_t;
+
+typedef volatile ngx_atomic_uint_t  ngx_atomic_t;
+
+#define ngx_atomic_cmp_set(lock, old, set)                                    \
+    __sync_bool_compare_and_swap(lock, old, set)
+
+#define ngx_atomic_fetch_add(value, add)                                      \
+    __sync_fetch_and_add(value, add)
+
+#define ngx_sched_yield()  sched_yield()
+
+#define ngx_cpu_pause()             __asm__ ("pause")
+
+#define ngx_unlock(lock)    *(lock) = 0
+
+ngx_int_t    ngx_ncpu;
+
+static void
+ngx_spinlock(ngx_atomic_t *lock, ngx_atomic_int_t value, ngx_uint_t spin)
+{
+    ngx_uint_t  i, n;
+
+    for (;; ) {
+
+        if (*lock == 0 && ngx_atomic_cmp_set(lock, 0, value)) {
+            return;
+        }
+
+        if (ngx_ncpu > 1) {
+
+            for (n = 1; n < spin; n <<= 1) {
+
+                for (i = 0; i < n; i++) {
+                    ngx_cpu_pause();
+                }
+
+                if (*lock == 0 && ngx_atomic_cmp_set(lock, 0, value)) {
+                    return;
+                }
+            }
+        }
+
+        ngx_sched_yield();
+    }
+}
+
+static ngx_atomic_t stdout_lock = 0;
+
 /// block processor
 enum {
 	STATE_IGNORE_BLOCK,
@@ -505,11 +576,17 @@ block_processor_eval_filter(block_processor_state_t* state)
 	}
 
 	state->state = STATE_OUTPUT_BLOCK;
+
+	ngx_spinlock(&stdout_lock, 1, 2048);
+
 	if (state->prefix_len != 0)
 	{
 		fwrite(state->prefix_data, state->prefix_len, 1, stdout);
 	}
 	fwrite(state->cur_block_start, state->cur_block_end - state->cur_block_start, 1, stdout);
+
+	ngx_unlock(&stdout_lock);
+
 	return TRUE;
 }
 
@@ -550,7 +627,11 @@ block_processor_line_start(block_processor_state_t* state, u_char* buffer, size_
 	if (state->state == STATE_OUTPUT_BLOCK && state->suffix_len > 0)
 	{
 		// write the suffix
+		ngx_spinlock(&stdout_lock, 1, 2048);
+
 		fwrite(state->suffix_data, state->suffix_len, 1, stdout);
+
+		ngx_unlock(&stdout_lock);
 	}
 
 	if (!capture_conditions_eval((const char *)buffer, captures, exec_result))
@@ -574,7 +655,11 @@ block_processor_append_data(block_processor_state_t* state, u_char* buffer, size
 		return;
 
 	case STATE_OUTPUT_BLOCK:
+		ngx_spinlock(&stdout_lock, 1, 2048);
+
 		fwrite(buffer, size, 1, stdout);
+
+		ngx_unlock(&stdout_lock);
 		return;
 
 	case STATE_COLLECT_BLOCK:
@@ -625,7 +710,11 @@ block_processor_append_data(block_processor_state_t* state, u_char* buffer, size
 	// buffer is full, evaluate the block
 	if (block_processor_eval_filter(state))
 	{
+		ngx_spinlock(&stdout_lock, 1, 2048);
+
 		fwrite(buffer + copy_size, size - copy_size, 1, stdout);
+
+		ngx_unlock(&stdout_lock);
 	}
 }
 
@@ -815,6 +904,26 @@ process_file(curl_ext_conf_t* conf, const char* file_name, int file_name_prefix)
 	return 0;
 }
 
+static void*
+process_thread(void* data)
+{
+	thread_ctx_t* ctx = data;
+	uintptr_t rc;
+	long i;
+
+	rc = EXIT_SUCCESS;
+
+	for (i = ctx->start; i < ctx->max; i += ctx->increment)
+	{
+		if (process_file(ctx->conf, ctx->files[i], ctx->file_name_prefix) != 0)
+		{
+			rc = EXIT_ERROR;
+		}
+	}
+
+	return (void*)rc;
+}
+
 static void
 usage(int status)
 {
@@ -824,10 +933,10 @@ usage(int status)
 		fprintf (stderr, "Try '%s --help' for more information.\n", program_name);
 	}
 	else
-    {
-      printf ("Usage: %s [OPTION]... [FILE]...\n", program_name);
+	{
+		printf ("Usage: %s [OPTION]... [FILE]...\n", program_name);
 
-      printf ("\
+		printf ("\
 Search for blocks matching the provided search criteria in each gzip FILE.\n\
 A block is a set of lines, the first of which matches a provided regular\n\
 expression.\n\
@@ -835,7 +944,7 @@ expression.\n\
 Each FILE may contain a range specification of the format FILE:START-END,\n\
 where START and END are byte offsets within the file.\n");
 
-      printf ("\
+		printf ("\
 Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' -c '$1>=12:34:56' input.log.gz\n\
 \n", program_name);
 
@@ -855,6 +964,7 @@ Example: %s -p '(\\d{2}:\\d{2}:\\d{2})' -c '$1>=12:34:56' input.log.gz\n\
                             matched against each block, more details below.\n\
   -d, --block-delimiter     a string that is printed in a separate line\n\
                             following each identified block.\n\
+  -T, --max-threads         maximum number of threads.\n\
   -i, --ini                 sets an ini file containing request params.\n\
 ");
 
@@ -904,11 +1014,18 @@ int
 main(int argc, char **argv)
 {
 	curl_ext_conf_t* conf;
+	thread_ctx_t* threads;
+	thread_ctx_t* cur_thread;
 	const char *conf_file = NULL;
 	const char *errstr;
 	CURLcode res;
+	void* ret;
 	char* pattern = "^.";
+	char* end;
 	char error_str[128];
+	long thread_count;
+	long max_threads;
+	long i;
 	int prefix_mode = PM_UNDEFINED;
 	int erroff;
 	int opt;
@@ -916,6 +1033,8 @@ main(int argc, char **argv)
 
 	// parse the command line
 	program_name = argv[0];
+
+	max_threads = get_nprocs();
 
 	for (;;)
 	{
@@ -941,6 +1060,15 @@ main(int argc, char **argv)
 
 		case 't':
 			time_format = optarg;
+			break;
+
+		case 'T':
+			max_threads = strtol(optarg, &end, 10);
+			if (*end != '\0' || max_threads <= 0 || max_threads > get_nprocs())
+			{
+				error(0, "invalid thread count %s", optarg);
+				return EXIT_ERROR;
+			}
 			break;
 
 		case 'c':
@@ -992,7 +1120,7 @@ main(int argc, char **argv)
 	}
 
 	if (optind + 1 > argc)
-    {
+	{
 		usage(EXIT_SUCCESS);
 	}
 
@@ -1044,15 +1172,52 @@ main(int argc, char **argv)
 		return EXIT_ERROR;
 	}
 
-	// process the files
-	rc = EXIT_SUCCESS;
-	while (optind < argc)
+	thread_count = argc - optind;
+	if (thread_count > max_threads)
 	{
-		if (process_file(conf, argv[optind++], prefix_mode == PM_WITH_FILENAME) != 0)
+		thread_count = max_threads;
+	}
+
+	threads = malloc(sizeof(threads[0]) * thread_count);
+	if (threads == NULL)
+	{
+		error(0, "malloc failed");
+		return EXIT_ERROR;
+	}
+
+	cur_thread = threads;
+
+	for (i = 0; i < thread_count; i++)
+	{
+		cur_thread->files = argv;
+		cur_thread->start = optind + i;
+		cur_thread->max = argc;
+		cur_thread->increment = thread_count;
+
+		cur_thread->conf = conf;
+		cur_thread->file_name_prefix = prefix_mode == PM_WITH_FILENAME;
+
+		rc = pthread_create(&cur_thread->thread, NULL, process_thread, cur_thread);
+		if (rc != 0)
+		{
+			error(rc, "pthread_create failed");
+			return EXIT_ERROR;
+		}
+
+		cur_thread++;
+	}
+
+
+	for (i = 0; i < thread_count; i++)
+	{
+		pthread_join(threads[i].thread, &ret);
+		if (ret)
 		{
 			rc = EXIT_ERROR;
 		}
 	}
+
+	free(threads);
 
 	curl_ext_conf_free(conf);
 
