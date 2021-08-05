@@ -16,8 +16,8 @@ verror(int errnum, const char *message, va_list args)
 	vfprintf(stderr, message, args);
 	if (errnum)
 	{
-		s = strerror (errnum);
-		fprintf (stderr, ": %s", s);		
+		s = strerror(errnum);
+		fprintf(stderr, ": %s", s);
 	}
 	putc('\n', stderr);
 	fflush(stderr);

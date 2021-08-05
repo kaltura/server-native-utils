@@ -1,1 +1,1 @@
-gcc -g -O2 -Wall -DINI_MAX_LINE=4096 -o zblockgrep zblockgrep.c json_parser.c filter.c ../compressed_file.c ../curl_ext.c ../curl_ext_s3.c ../capture_expression.c ../common.c ../inih/ini.c -I../inih/ -lz -lpcre -lcurl -lcrypto
+gcc -g -O2 -Wall -DINI_MAX_LINE=4096 -o zblockgrep zblockgrep.c json_parser.c filter.c ../compressed_file.c ../curl_ext.c ../curl_ext_s3.c ../capture_expression.c ../common.c ../inih/ini.c -I../inih/ -lz -lpcre -lcurl -lcrypto -pthread
