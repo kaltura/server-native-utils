@@ -22,8 +22,8 @@ CRED_FILE = '/tmp/s3grep.%s.ini' % os.getpid()
 CACHE_FILE = '/tmp/s3grep.%s.cache'
 CACHE_EXPIRY = 1800
 
-cred_last = None
 
+cred_last = None
 def update_cred_ini(session):
     global cred_last
 
@@ -50,6 +50,7 @@ def del_cred_ini():
         os.remove(CRED_FILE)
     except OSError:
         pass
+
 
 def apply_filter(key, filter):
     base_key = os.path.basename(key)
@@ -83,6 +84,25 @@ def include_exclude(option, opt, value, parser, type):
     dest = option.dest
     values = parser.values
     values.ensure_value(dest, []).append((type, value))
+
+def chunks(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+done_size = 0
+last_percent = 0
+def update_progress(size):
+    global done_size, last_percent
+
+    if not options.verbose:
+        return
+
+    done_size += size
+    percent = int(done_size * 100 / total_size)
+    if percent != last_percent:
+        sys.stderr.write('%s%% ' % percent)
+        last_percent = percent
+
 
 parser = OptionParser(usage='%prog [OPTION]... PATTERN S3URI',
     add_help_option=False)
@@ -215,9 +235,11 @@ if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
             'ignorecase': options.ignore_case
         }
 
-    grep_options = " -f '%s'" % json.dumps(filter)
+    grep_options = " -T%s -f '%s'" % (options.max_processes, json.dumps(filter))
     if output_filename:
         grep_options += ' -H'
+    else:
+        grep_options += ' -h'
 
     if options.verbose:
         sys.stderr.write('Using: zblockgrep%s\n' % grep_options)
@@ -240,26 +262,30 @@ else:
         sys.stderr.write('Using: grep%s\n' % grep_options)
 
 # run the grep commands
-processes = set()
-done_size = 0
-last_percent = 0
-for size, prefix in file_list:
-    if options.verbose:
-        done_size += size
-        percent = int(done_size * 100 / total_size)
-        if percent != last_percent:
-            sys.stderr.write('%s%% ' % percent)
-            last_percent = percent
+if ZBLOCKGREP_BIN:
+    for chunk in chunks(file_list, options.max_processes * 4):
+        size = sum([x[0] for x in chunk])
+        paths = ['s3://%s/%s' % (bucket_name, x[1]) for x in chunk]
 
-    path = 's3://%s/%s' % (bucket_name, prefix)
+        update_progress(size)
 
-    if ZBLOCKGREP_BIN:
         update_cred_ini(session)
         cmd = '%s --ini %s %s %s' % (ZBLOCKGREP_BIN, CRED_FILE,
-            grep_options, path)
+            grep_options, ' '.join(paths))
         if options.pipe is not None:
             cmd += ' | %s' % options.pipe
-    else:
+
+        os.system(cmd)
+
+    del_cred_ini()
+
+else:
+    processes = set()
+    for size, prefix in file_list:
+        update_progress(size)
+
+        path = 's3://%s/%s' % (bucket_name, prefix)
+
         grep_command = 'grep' + grep_options
         if output_filename:
             grep_command += " '--label=%s' -H" % path
@@ -269,19 +295,17 @@ for size, prefix in file_list:
         cmd = "aws s3 cp --profile '%s' '%s' - | gzip -d | %s" % (
             options.profile, path, grep_command)
 
-    processes.add(subprocess.Popen(cmd, shell=True))
+        processes.add(subprocess.Popen(cmd, shell=True))
 
-    if len(processes) < options.max_processes:
-        continue
+        if len(processes) < options.max_processes:
+            continue
 
-    os.wait()
-    processes.difference_update([
-        p for p in processes if p.poll() is not None])
+        os.wait()
+        processes.difference_update([
+            p for p in processes if p.poll() is not None])
 
-for p in processes:
-    p.wait()
-
-del_cred_ini()
+    for p in processes:
+        p.wait()
 
 if options.verbose:
     sys.stderr.write('\nDone, took %s sec\n' % int(time.time() - start))
