@@ -62,7 +62,7 @@ def apply_filter(key, filter):
 def list(s3, bucket_name, prefix, filter, delimiter):
     paginator = s3.get_paginator('list_objects')
     page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix,
-        Delimiter='')
+        Delimiter=delimiter)
 
     result = []
     for page in page_iterator:
@@ -79,6 +79,44 @@ def list(s3, bucket_name, prefix, filter, delimiter):
             result.append((size, key))
 
     return result
+
+def is_wildcard(path):
+    return '*' in path or '?' in path or '[' in path
+
+def expand(s3, bucket_name, parts, base=[]):
+    for i in range(len(parts)):
+        part = parts[i]
+        if i == len(parts) - 1 or not is_wildcard(part):
+            base.append(part)
+            continue
+
+        paginator = s3.get_paginator('list_objects')
+        page_iterator = paginator.paginate(Bucket=bucket_name,
+            Prefix='/'.join(base) + '/', Delimiter='/')
+
+        matches = []
+        for page in page_iterator:
+            if not 'CommonPrefixes' in page:
+                continue
+
+            for item in page['CommonPrefixes']:
+                # extract the last part from the prefix
+                key = item['Prefix'].split('/')[-2]
+                if fnmatch.fnmatchcase(key, part):
+                    matches.append(key)
+
+        if len(matches) == 1:
+            base.append(matches[0])
+            continue
+
+        # handle the remaining parts recursively
+        result = []
+        for match in matches:
+            result += expand(s3, bucket_name, parts[(i + 1):], base + [match])
+        return result
+
+    return ['/'.join(base)]
+
 
 def include_exclude(option, opt, value, parser, type):
     dest = option.dest
@@ -198,9 +236,15 @@ if time.time() - cache_time < CACHE_EXPIRY:
         data = f.read()
     file_list = json.loads(zlib.decompress(data))
 else:
+    prefixes = expand(s3, bucket_name, prefix.split('/'))
+    if options.verbose and prefixes != [prefix]:
+        sys.stderr.write('Expanded prefixes: %s\n' % ', '.join(prefixes))
+
     if options.verbose:
         sys.stderr.write('Listing objects...\n')
-    file_list = list(s3, bucket_name, prefix, options.filter, delimiter)
+    file_list = []
+    for cur_prefix in prefixes:
+        file_list += list(s3, bucket_name, cur_prefix, options.filter, delimiter)
 
     data = zlib.compress(json.dumps(file_list))
     with open(cache_file, 'wb') as f:
