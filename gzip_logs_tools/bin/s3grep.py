@@ -90,9 +90,10 @@ def expand(s3, bucket_name, parts, base=[]):
             base.append(part)
             continue
 
+        prefix = ''.join(map(lambda x: x + '/', base))
         paginator = s3.get_paginator('list_objects')
         page_iterator = paginator.paginate(Bucket=bucket_name,
-            Prefix='/'.join(base) + '/', Delimiter='/')
+            Prefix=prefix, Delimiter='/')
 
         matches = []
         for page in page_iterator:
