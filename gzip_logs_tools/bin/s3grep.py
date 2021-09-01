@@ -291,7 +291,7 @@ if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
 else:
     ZBLOCKGREP_BIN = False
 
-    grep_options = ''
+    grep_options = ' -a'
     if options.ignore_case:
         grep_options += ' -i'
     if options.after_context:
