@@ -55,12 +55,13 @@ parse_capture_expression(
 		cur->capture_index = *next++ - '1';
 		cur->data = pos;
 		cur->len = (next - 2) - pos;
-		cur++;
 
 		if (cur->capture_index > *max_capture_index)
 		{
 			*max_capture_index = cur->capture_index;
 		}
+
+		cur++;
 
 		pos = next;
 	}
