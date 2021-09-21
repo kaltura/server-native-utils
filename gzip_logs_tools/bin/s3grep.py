@@ -4,12 +4,12 @@ import botocore
 import datetime
 import hashlib
 import fnmatch
-import os.path
 import boto3
 import json
 import time
 import zlib
 import sys
+import os
 
 FILTER_INCLUDE = 'I'
 FILTER_EXCLUDE = 'E'
@@ -320,7 +320,8 @@ if ZBLOCKGREP_BIN:
         if options.pipe is not None:
             cmd += ' | %s' % options.pipe
 
-        os.system(cmd)
+        p = subprocess.Popen(cmd, shell=True)
+        p.wait()
 
     del_cred_ini()
 
