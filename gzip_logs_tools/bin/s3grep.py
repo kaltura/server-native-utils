@@ -192,6 +192,8 @@ parser.add_option('-m', '--max-processes', dest='max_processes', type='int',
     metavar='COUNT')
 parser.add_option('-p', '--pipe', dest='pipe',
     help='a command string to pipe the output to', metavar='CMD')
+parser.add_option('-e', '--encoding', dest='encoding', default='gz',
+    help='encoding - txt/gz [default: %default]', metavar='ENCODING')
 
 # parse the command line
 (options, args) = parser.parse_args()
@@ -265,7 +267,8 @@ else:
     output_filename = len(file_list) > 1
 
 if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
-    and not options.before_context and not options.context):
+    and not options.before_context and not options.context
+    and options.encoding == 'gz'):
 
     if options.pcre:
         filter = {
@@ -303,6 +306,13 @@ else:
     if options.pcre:
         grep_options += ' -P'
 
+    if options.encoding == 'txt':
+        decode = ''
+    elif options.encoding == 'gz':
+        decode = 'gzip -d | '
+    else:
+        parser.error('unknown encoding "%s"' % options.encoding)
+
     if options.verbose:
         sys.stderr.write('Using: grep%s\n' % grep_options)
 
@@ -338,8 +348,8 @@ else:
         grep_command += " '%s'" % pattern
         if options.pipe is not None:
             grep_command += ' | %s' % options.pipe
-        cmd = "aws s3 cp --profile '%s' '%s' - | gzip -d | %s" % (
-            options.profile, path, grep_command)
+        cmd = "aws s3 cp --profile '%s' '%s' - | %s%s" % (
+            options.profile, path, decode, grep_command)
 
         processes.add(subprocess.Popen(cmd, shell=True))
 
