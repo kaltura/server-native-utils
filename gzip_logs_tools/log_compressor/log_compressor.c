@@ -139,7 +139,7 @@ file_writer_thread(void* context)
 		}
 				
 		bytes_written = write(output_fd, input_buffer.ptr, input_buffer.size);
-		if (bytes_written != input_buffer.size)
+		if (bytes_written < 0 || (size_t) bytes_written != input_buffer.size) // -1 if not written else size which is <= input_buffer)
 		{
 			log_print("write failed %d", errno);
 			// may happen in case of disk full, just retry next time (the file can get corrupted of course)
@@ -689,7 +689,7 @@ init_state(state_t* state, const char* input_owner, char *args)
 	}
 	
 	colon_pos = strchr(args, ':');
-	if (colon_pos == NULL || colon_pos - args >= sizeof(input_path))
+	if (colon_pos == NULL || colon_pos - args >=  (long) sizeof(input_path)) // safe to cast sideof(input_path)<4096
 	{
 		log_print("init_state: failed to parse input param %s", args);
 		return FALSE;
@@ -791,7 +791,8 @@ create_pid_file(const char *pid_file)
 	}	
 
 	sprintf(buf, "%ld\n", (long) getpid());
-	if (write(fd, buf, strlen(buf)) != strlen(buf))
+	ssize_t written_bytes = write(fd, buf, strlen(buf));
+	if (written_bytes <0 || (size_t) written_bytes < strlen(buf)) // -1 if not written else size which is <= input_buffer)
 	{
 		log_print("create_pid_file: write failed %d", errno);
 		return FALSE;
@@ -891,10 +892,10 @@ main_thread(int argc, char *argv[])
 	pthread_t* cur_tinfo;
 	sigset_t set;
 	state_t* states;
-	unsigned thread_index;
-	unsigned arg_index;
+	unsigned  thread_index;
+	int arg_index;
 	int watched_inputs;
-	int thread_count;
+	unsigned thread_count;
 	int rc;
 	
 	// create a semaphore that threads can use to notify errors
