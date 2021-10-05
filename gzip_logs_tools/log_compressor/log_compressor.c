@@ -565,6 +565,11 @@ init_unix_dgram_socket(state_t* state, const char* path, const char* owner)
 	}
 	
 	unlink(path);
+	if (strlen(path) > sizeof(struct sockaddr_un) - 1)
+	{
+		log_print("init_unix_dgram_socket: path %s too long", path);
+		return FALSE;
+	}
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
@@ -689,7 +694,7 @@ init_state(state_t* state, const char* input_owner, char *args)
 	}
 	
 	colon_pos = strchr(args, ':');
-	if (colon_pos == NULL || colon_pos - args >=  (long) sizeof(input_path)) // safe to cast sideof(input_path)<4096
+	if (colon_pos == NULL || (size_t) (colon_pos - args) >=   sizeof(input_path)) 
 	{
 		log_print("init_state: failed to parse input param %s", args);
 		return FALSE;
@@ -791,8 +796,9 @@ create_pid_file(const char *pid_file)
 	}	
 
 	sprintf(buf, "%ld\n", (long) getpid());
-	ssize_t written_bytes = write(fd, buf, strlen(buf));
-	if (written_bytes <0 || (size_t) written_bytes < strlen(buf)) // -1 if not written else size which is <= input_buffer)
+	size_t buf_len = strlen(buf);
+	ssize_t written_bytes = write(fd, buf, buf_len);
+	if (written_bytes < (ssize_t) buf_len)
 	{
 		log_print("create_pid_file: write failed %d", errno);
 		return FALSE;
@@ -812,11 +818,6 @@ static thread_func_t threads[] = {
 static bool_t
 file_mode_main(const char* path)
 {
-	if (strlen(path) > sizeof(struct sockaddr_un) - 1)
-	{
-		log_print("init_unix_dgram_socket: path %s too long", path);
-		return FALSE;
-	}
 	pthread_t* cur_tinfo;
 	pthread_t tinfos[ARRAY_ELEMENTS(threads)];
 	state_t state;
@@ -892,7 +893,7 @@ main_thread(int argc, char *argv[])
 	pthread_t* cur_tinfo;
 	sigset_t set;
 	state_t* states;
-	unsigned  thread_index;
+	unsigned thread_index;
 	int arg_index;
 	int watched_inputs;
 	unsigned thread_count;
