@@ -139,7 +139,7 @@ file_writer_thread(void* context)
 		}
 				
 		bytes_written = write(output_fd, input_buffer.ptr, input_buffer.size);
-		if (bytes_written < 0 || (size_t) bytes_written != input_buffer.size) // -1 if not written else size which is <= input_buffer)
+		if (bytes_written != (ssize_t) input_buffer.size) 
 		{
 			log_print("write failed %d", errno);
 			// may happen in case of disk full, just retry next time (the file can get corrupted of course)
