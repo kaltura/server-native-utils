@@ -21,7 +21,6 @@
 #include "buffer_pool.h"
 #include "itp.h"
 
-
 // paths
 #define PID_FILE_PATH "/var/run/log_compressor.pid"
 #define LOG_FILE_PATH "/var/log/log_compressor.log"
@@ -811,11 +810,6 @@ static thread_func_t threads[] = {
 static bool_t
 file_mode_main(const char* path)
 {
-	if (strlen(path) > sizeof(struct sockaddr_un) - 1)
-	{
-		log_print("init_unix_dgram_socket: path %s too long", path);
-		return FALSE;
-	}
 	pthread_t* cur_tinfo;
 	pthread_t tinfos[ARRAY_ELEMENTS(threads)];
 	state_t state;

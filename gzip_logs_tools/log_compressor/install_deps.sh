@@ -1,1 +1,0 @@
-apt-get update && apt-get install gcc zlib1g-dev
