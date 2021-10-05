@@ -565,7 +565,7 @@ init_unix_dgram_socket(state_t* state, const char* path, const char* owner)
 	}
 	
 	unlink(path);
-	if (strlen(path) > sizeof(struct sockaddr_un) - 1)
+	if (strlen(path) > sizeof(addr.sun_path) - 1)
 	{
 		log_print("init_unix_dgram_socket: path %s too long", path);
 		return FALSE;
@@ -763,6 +763,8 @@ create_pid_file(const char *pid_file)
 	struct flock fl;
 	int fd;
 	char buf[100];
+	size_t buf_len;
+	ssize_t bytes_written;
 
 	fd = open(pid_file, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
 	if (fd == -1)
@@ -796,9 +798,9 @@ create_pid_file(const char *pid_file)
 	}	
 
 	sprintf(buf, "%ld\n", (long) getpid());
-	size_t buf_len = strlen(buf);
-	ssize_t written_bytes = write(fd, buf, buf_len);
-	if (written_bytes < (ssize_t) buf_len)
+	buf_len = strlen(buf);
+	bytes_written = write(fd, buf, buf_len);
+	if (bytes_written != (ssize_t) buf_len)
 	{
 		log_print("create_pid_file: write failed %d", errno);
 		return FALSE;
