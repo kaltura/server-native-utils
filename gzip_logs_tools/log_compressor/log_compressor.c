@@ -21,6 +21,7 @@
 #include "buffer_pool.h"
 #include "itp.h"
 
+
 // paths
 #define PID_FILE_PATH "/var/run/log_compressor.pid"
 #define LOG_FILE_PATH "/var/log/log_compressor.log"
@@ -138,7 +139,7 @@ file_writer_thread(void* context)
 		}
 				
 		bytes_written = write(output_fd, input_buffer.ptr, input_buffer.size);
-		if (bytes_written != input_buffer.size)
+		if (bytes_written != (ssize_t) input_buffer.size) 
 		{
 			log_print("write failed %d", errno);
 			// may happen in case of disk full, just retry next time (the file can get corrupted of course)
@@ -564,6 +565,11 @@ init_unix_dgram_socket(state_t* state, const char* path, const char* owner)
 	}
 	
 	unlink(path);
+	if (strlen(path) > sizeof(addr.sun_path) - 1)
+	{
+		log_print("init_unix_dgram_socket: path %s too long", path);
+		return FALSE;
+	}
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
@@ -688,7 +694,7 @@ init_state(state_t* state, const char* input_owner, char *args)
 	}
 	
 	colon_pos = strchr(args, ':');
-	if (colon_pos == NULL || colon_pos - args >= sizeof(input_path))
+	if (colon_pos == NULL || (size_t) (colon_pos - args) >=   sizeof(input_path)) 
 	{
 		log_print("init_state: failed to parse input param %s", args);
 		return FALSE;
@@ -757,6 +763,8 @@ create_pid_file(const char *pid_file)
 	struct flock fl;
 	int fd;
 	char buf[100];
+	size_t buf_len;
+	ssize_t bytes_written;
 
 	fd = open(pid_file, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
 	if (fd == -1)
@@ -790,7 +798,9 @@ create_pid_file(const char *pid_file)
 	}	
 
 	sprintf(buf, "%ld\n", (long) getpid());
-	if (write(fd, buf, strlen(buf)) != strlen(buf))
+	buf_len = strlen(buf);
+	bytes_written = write(fd, buf, buf_len);
+	if (bytes_written != (ssize_t) buf_len)
 	{
 		log_print("create_pid_file: write failed %d", errno);
 		return FALSE;
@@ -886,9 +896,9 @@ main_thread(int argc, char *argv[])
 	sigset_t set;
 	state_t* states;
 	unsigned thread_index;
-	unsigned arg_index;
+	int arg_index;
 	int watched_inputs;
-	int thread_count;
+	unsigned thread_count;
 	int rc;
 	
 	// create a semaphore that threads can use to notify errors
