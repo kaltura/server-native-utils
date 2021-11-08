@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <errno.h>
+typedef char my_bool; /* Small bool */
+
 #ifdef __WIN__
 typedef unsigned __int64 ulonglong;    /* Microsoft's 64 bit types */
 typedef __int64 longlong;
@@ -10,6 +16,7 @@ typedef __int64 longlong;
 typedef unsigned long long ulonglong;
 typedef long long longlong;
 #endif /*__WIN__*/
+
 #else
 #include <my_global.h>
 #include <my_sys.h>
