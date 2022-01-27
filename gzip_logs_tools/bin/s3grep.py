@@ -1,5 +1,6 @@
 from optparse import OptionParser
 import subprocess
+import threading
 import botocore
 import datetime
 import hashlib
@@ -59,12 +60,11 @@ def apply_filter(key, filter):
             return type == FILTER_INCLUDE
     return True
 
-def list(s3, bucket_name, prefix, filter, delimiter):
+def list(s3, bucket_name, prefix, filter, delimiter, result):
     paginator = s3.get_paginator('list_objects')
     page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix,
         Delimiter=delimiter)
 
-    result = []
     for page in page_iterator:
         if not 'Contents' in page:
             continue
@@ -77,8 +77,6 @@ def list(s3, bucket_name, prefix, filter, delimiter):
             if not apply_filter(key, filter):
                 continue
             result.append((size, key))
-
-    return result
 
 def is_wildcard(path):
     return '*' in path or '?' in path or '[' in path
@@ -125,22 +123,77 @@ def include_exclude(option, opt, value, parser, type):
     values.ensure_value(dest, []).append((type, value))
 
 def chunks(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
+    chunk = []
+    for i in lst:
+        chunk.append(i)
+        if len(chunk) < n:
+            continue
+        yield chunk
+        chunk = []
+    if len(chunk) > 0:
+        yield chunk
 
-done_size = 0
-last_percent = 0
-def update_progress(size):
-    global done_size, last_percent
+total_size = None
+def print_file_list_info(file_list, start):
+    global total_size
 
     if not options.verbose:
         return
 
+    total_size = sum(map(lambda x: x[0], file_list))
+    sys.stderr.write('Took %s sec... scanning %s objects, %s MB...\n' % (
+        int(time.time() - start), len(file_list), total_size / (1024 * 1024)))
+
+done_size = 0
+last_percent = 0
+def update_progress(size):
+    global done_size, last_percent, total_size
+
     done_size += size
+    if not options.verbose or total_size is None:
+        return
+
     percent = int(done_size * 100 / total_size)
     if percent != last_percent:
         sys.stderr.write('%s%% ' % percent)
         last_percent = percent
+
+def list_files_thread(file_list):
+    if options.verbose:
+        sys.stderr.write('Listing objects...\n')
+
+    for cur_prefix in prefixes:
+        list(s3, bucket_name, cur_prefix, options.filter, delimiter, file_list)
+
+    data = zlib.compress(json.dumps(file_list))
+    with open(cache_file, 'wb') as f:
+        f.write(data)
+
+    print_file_list_info(file_list, start)
+
+def files_iter(file_list, t):
+    pos = 0
+    while True:
+        if pos < len(file_list):
+            yield file_list[pos]
+            pos += 1
+            continue
+        if not t.is_alive():
+            break
+        time.sleep(1)
+
+def get_file_list_generator():
+    file_list = []
+
+    t = threading.Thread(target=list_files_thread, args=[file_list])
+    t.daemon = True
+    t.start()
+
+    # wait in order to find out whether we have more than one file
+    while len(file_list) <= 1 and t.is_alive():
+        time.sleep(1)
+
+    return files_iter(file_list, t), len(file_list) > 1
 
 
 parser = OptionParser(usage='%prog [OPTION]... PATTERN S3URI',
@@ -238,25 +291,14 @@ if time.time() - cache_time < CACHE_EXPIRY:
     with open(cache_file, 'rb') as f:
         data = f.read()
     file_list = json.loads(zlib.decompress(data))
+    multi_file = len(file_list) > 1
+    print_file_list_info(file_list, start)
 else:
     prefixes = expand(s3, bucket_name, prefix.split('/'))
     if options.verbose and prefixes != [prefix]:
         sys.stderr.write('Expanded prefixes: %s\n' % ', '.join(prefixes))
 
-    if options.verbose:
-        sys.stderr.write('Listing objects...\n')
-    file_list = []
-    for cur_prefix in prefixes:
-        file_list += list(s3, bucket_name, cur_prefix, options.filter, delimiter)
-
-    data = zlib.compress(json.dumps(file_list))
-    with open(cache_file, 'wb') as f:
-        f.write(data)
-
-if options.verbose:
-    total_size = sum(map(lambda x: x[0], file_list))
-    sys.stderr.write('Took %s sec... scanning %s objects, %s MB...\n' % (
-        int(time.time() - start), len(file_list), total_size / (1024 * 1024)))
+    file_list, multi_file = get_file_list_generator()
 
 # init
 if options.with_filename:
@@ -264,7 +306,7 @@ if options.with_filename:
 elif options.no_filename:
     output_filename = False
 else:
-    output_filename = len(file_list) > 1
+    output_filename = multi_file
 
 if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
     and not options.before_context and not options.context
