@@ -239,6 +239,9 @@ parser.add_option('-C', '--context', dest='context', type='int',
     help='Print NUM lines of output context', metavar='NUM')
 parser.add_option('-P', '--perl-regexp', dest='pcre', default=False,
     action='store_true', help='PATTERN is a Perl regular expression')
+parser.add_option('--block-pattern', dest='block_pattern', default='^.',
+    help='regular expression for identifying block start [default: %default]',
+    metavar='PATTERN')
 
 parser.add_option('-m', '--max-processes', dest='max_processes', type='int',
     default=4, help='maximum number of processes to spawn [default: %default]',
@@ -325,7 +328,8 @@ if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
             'ignorecase': options.ignore_case
         }
 
-    grep_options = " -T%s -f '%s'" % (options.max_processes, json.dumps(filter))
+    grep_options = " -T%s -f '%s' -p '%s'" % (options.max_processes,
+        json.dumps(filter), options.block_pattern)
     if output_filename:
         grep_options += ' -H'
     else:
@@ -407,3 +411,4 @@ else:
 
 if options.verbose:
     sys.stderr.write('\nDone, took %s sec\n' % int(time.time() - start))
+
