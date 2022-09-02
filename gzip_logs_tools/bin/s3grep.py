@@ -76,12 +76,12 @@ def list(s3, bucket_name, prefix, filter, delimiter, result):
                 continue
             if not apply_filter(key, filter):
                 continue
-            result.append((size, key))
+            result.append((size, 's3://%s/%s' % (bucket_name, key)))
 
 def is_wildcard(path):
     return '*' in path or '?' in path or '[' in path
 
-def expand(s3, bucket_name, parts, base=[]):
+def expand(s3, bucket_name, parts, base):
     for i in range(len(parts)):
         part = parts[i]
         if i == len(parts) - 1 or not is_wildcard(part):
@@ -114,7 +114,7 @@ def expand(s3, bucket_name, parts, base=[]):
             result += expand(s3, bucket_name, parts[(i + 1):], base + [match])
         return result
 
-    return ['/'.join(base)]
+    return [(bucket_name, '/'.join(base))]
 
 
 def include_exclude(option, opt, value, parser, type):
@@ -162,8 +162,8 @@ def list_files_thread(file_list):
     if options.verbose:
         sys.stderr.write('Listing objects...\n')
 
-    for cur_prefix in prefixes:
-        list(s3, bucket_name, cur_prefix, options.filter, delimiter, file_list)
+    for bucket_name, prefix in paths:
+        list(s3, bucket_name, prefix, options.filter, delimiter, file_list)
 
     data = zlib.compress(json.dumps(file_list))
     with open(cache_file, 'wb') as f:
@@ -196,7 +196,7 @@ def get_file_list_generator():
     return files_iter(file_list, t), len(file_list) > 1
 
 
-parser = OptionParser(usage='%prog [OPTION]... PATTERN S3URI',
+parser = OptionParser(usage='%prog [OPTION]... PATTERN S3URI1 [S3URI2 ...]',
     add_help_option=False)
 parser.add_option('--help', help='display this help and exit', action='help')
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true',
@@ -254,14 +254,11 @@ parser.add_option('-e', '--encoding', dest='encoding', default='gz',
 # parse the command line
 (options, args) = parser.parse_args()
 
-if len(args) != 2:
-    parser.error('expecting 2 arguments')
+if len(args) < 2:
+    parser.error('expecting at least 2 arguments')
 
-pattern, s3_uri = args
-
-if s3_uri.startswith('s3://'):
-    s3_uri = s3_uri[len('s3://'):]
-bucket_name, prefix = s3_uri.split('/', 1)
+pattern = args[0]
+s3_uris = args[1:]
 
 if options.filter is None:
     options.filter = []
@@ -276,7 +273,7 @@ s3 = session.client('s3')
 
 delimiter = '' if options.recursive else '/'
 
-cache_key = [options.profile, bucket_name, prefix, options.filter, delimiter]
+cache_key = [options.profile, s3_uris, options.filter, delimiter]
 m = hashlib.md5()
 m.update(json.dumps(cache_key))
 cache_file = CACHE_FILE % m.hexdigest()
@@ -297,9 +294,17 @@ if time.time() - cache_time < CACHE_EXPIRY:
     multi_file = len(file_list) > 1
     print_file_list_info(file_list, start)
 else:
-    prefixes = expand(s3, bucket_name, prefix.split('/'))
-    if options.verbose and prefixes != [prefix]:
-        sys.stderr.write('Expanded prefixes: %s\n' % ', '.join(prefixes))
+    paths = []
+    for s3_uri in s3_uris:
+        if s3_uri.startswith('s3://'):
+            s3_uri = s3_uri[len('s3://'):]
+        bucket_name, prefix = s3_uri.split('/', 1)
+
+        paths += expand(s3, bucket_name, prefix.split('/'), [])
+
+    if options.verbose:
+        str_paths = ['s3://%s/%s' % (x[0], x[1]) for x in paths]
+        sys.stderr.write('Searching paths: %s\n' % ' '.join(str_paths))
 
     file_list, multi_file = get_file_list_generator()
 
@@ -366,7 +371,7 @@ else:
 if ZBLOCKGREP_BIN:
     for chunk in chunks(file_list, options.max_processes * 4):
         size = sum([x[0] for x in chunk])
-        paths = ['s3://%s/%s' % (bucket_name, x[1]) for x in chunk]
+        paths = [x[1] for x in chunk]
 
         update_progress(size)
 
@@ -383,10 +388,8 @@ if ZBLOCKGREP_BIN:
 
 else:
     processes = set()
-    for size, prefix in file_list:
+    for size, path in file_list:
         update_progress(size)
-
-        path = 's3://%s/%s' % (bucket_name, prefix)
 
         grep_command = 'grep' + grep_options
         if output_filename:
