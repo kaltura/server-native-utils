@@ -747,7 +747,7 @@ block_processor_flush(block_processor_state_t* state)
 /// line processor
 typedef struct {
 	block_processor_state_t* block_state;
-	u_char line_buffer[1024];
+	u_char line_buffer[4096];
 	size_t line_buffer_size;
 	bool_t line_start;
 } line_processor_state_t;
