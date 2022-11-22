@@ -545,7 +545,7 @@ typedef struct {
 	size_t prefix_len;
 	const char* suffix_data;
 	size_t suffix_len;
-	u_char block_buffer[10240];
+	u_char block_buffer[65536];
 	u_char* cur_block_start;
 	u_char* cur_block_end;
 } block_processor_state_t;
@@ -747,7 +747,7 @@ block_processor_flush(block_processor_state_t* state)
 /// line processor
 typedef struct {
 	block_processor_state_t* block_state;
-	u_char line_buffer[4096];
+	u_char line_buffer[32768];
 	size_t line_buffer_size;
 	bool_t line_start;
 } line_processor_state_t;
