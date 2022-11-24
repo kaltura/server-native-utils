@@ -339,14 +339,33 @@ compressed_file_process(compressed_file_state_t* state)
 	CURLcode res;
 	long code;
 	long pos;
+	int i;
 
-	res = curl_easy_perform(state->curl);
-	if (res != CURLE_OK)
+	for (i = 0; ; i++)
 	{
-		if (res != CURLE_WRITE_ERROR)
+		res = curl_easy_perform(state->curl);
+		if (res == CURLE_OK)
 		{
+			break;
+		}
+
+		switch (res)
+		{
+		case CURLE_WRITE_ERROR:
+			break;
+
+		case CURLE_SSL_CACERT_BADFILE:
+			if (i < 5)
+			{
+				continue;
+			}
+
+			/* fall through */
+
+		default:
 			error(0, "%s: curl error %d - %s", state->input_url, res, curl_easy_strerror(res));
 		}
+
 		return FALSE;
 	}
 
