@@ -1,4 +1,5 @@
 from optparse import OptionParser
+import multiprocessing
 import subprocess
 import threading
 import botocore
@@ -203,7 +204,7 @@ parser.add_option('-v', '--verbose', dest='verbose', action='store_true',
     help='generate more verbose output')
 
 # aws options
-parser.add_option('-f', '--profile', dest='profile', default='buckets',
+parser.add_option('-f', '--profile', dest='profile', default=None,
     help='aws profile name [default: %default]', metavar='PROFILE')
 parser.add_option('-R', '--region', dest='region', default='us-east-1',
     help='aws region name [default: %default]')
@@ -243,8 +244,10 @@ parser.add_option('--block-pattern', dest='block_pattern', default='^.',
     help='regular expression for identifying block start [default: %default]',
     metavar='PATTERN')
 
+max_processes = min(multiprocessing.cpu_count(), 4)
+
 parser.add_option('-m', '--max-processes', dest='max_processes', type='int',
-    default=4, help='maximum number of processes to spawn [default: %default]',
+    default=max_processes, help='maximum number of processes to spawn [default: %default]',
     metavar='COUNT')
 parser.add_option('-p', '--pipe', dest='pipe',
     help='a command string to pipe the output to', metavar='CMD')
@@ -397,8 +400,13 @@ else:
         grep_command += " '%s'" % pattern
         if options.pipe is not None:
             grep_command += ' | %s' % options.pipe
-        cmd = "aws s3 cp --profile '%s' '%s' - | %s%s" % (
-            options.profile, path, decode, grep_command)
+
+        profile_param = ''
+        if options.profile is not None:
+            profile_param = "--profile '%s'" % options.profile
+
+        cmd = "aws s3 cp %s '%s' - | %s%s" % (
+            profile_param, path, decode, grep_command)
 
         processes.add(subprocess.Popen(cmd, shell=True))
 
