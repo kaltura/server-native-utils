@@ -42,7 +42,7 @@ def update_cred_ini(session):
 
     temp_cred_file = CRED_FILE + '.tmp'
     with open(temp_cred_file, 'wb') as f:
-        f.write(data)
+        f.write(data.encode('utf8'))
     os.rename(temp_cred_file, CRED_FILE)
 
     cred_last = data
@@ -278,7 +278,7 @@ delimiter = '' if options.recursive else '/'
 
 cache_key = [options.profile, s3_uris, options.filter, delimiter]
 m = hashlib.md5()
-m.update(json.dumps(cache_key))
+m.update(json.dumps(cache_key).encode('utf8'))
 cache_file = CACHE_FILE % m.hexdigest()
 
 start = time.time()
