@@ -143,7 +143,7 @@ def print_file_list_info(file_list, start):
 
     total_size = sum(map(lambda x: x[0], file_list))
     sys.stderr.write('Took %s sec... scanning %s objects, %s MB...\n' % (
-        int(time.time() - start), len(file_list), total_size / (1024 * 1024)))
+        int(time.time() - start), len(file_list), total_size // (1024 * 1024)))
 
 done_size = 0
 last_percent = 0
@@ -166,7 +166,7 @@ def list_files_thread(file_list):
     for bucket_name, prefix in paths:
         list(s3, bucket_name, prefix, options.filter, delimiter, file_list)
 
-    data = zlib.compress(json.dumps(file_list))
+    data = zlib.compress(json.dumps(file_list).encode('utf8'))
     with open(cache_file, 'wb') as f:
         f.write(data)
 
@@ -293,7 +293,7 @@ if time.time() - cache_time < CACHE_EXPIRY:
         sys.stderr.write('Loading from cache...\n')
     with open(cache_file, 'rb') as f:
         data = f.read()
-    file_list = json.loads(zlib.decompress(data))
+    file_list = json.loads(zlib.decompress(data).decode('utf8'))
     multi_file = len(file_list) > 1
     print_file_list_info(file_list, start)
 else:
