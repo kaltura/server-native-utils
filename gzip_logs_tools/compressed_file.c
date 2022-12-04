@@ -211,8 +211,8 @@ compressed_file_init(compressed_file_state_t* state, curl_ext_conf_t* conf, cons
 	{
 		if (sscanf(range_start + 1, "%ld-%ld", &start, &end) != 2)
 		{
-			error(0, "failed to parse range specification %s", range_start);
-			goto failed;
+			start = end = 0;
+			range_start = url + strlen(url);
 		}
 	}
 	else
