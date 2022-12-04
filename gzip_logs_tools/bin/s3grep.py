@@ -24,6 +24,9 @@ CRED_FILE = '/tmp/s3grep.%s.ini' % os.getpid()
 CACHE_FILE = '/tmp/s3grep.%s.cache'
 CACHE_EXPIRY = 1800
 
+def write_error(msg):
+    sys.stderr.write(msg)
+    sys.stderr.flush()
 
 cred_last = None
 def update_cred_ini(session):
@@ -38,7 +41,7 @@ def update_cred_ini(session):
         return
 
     if options.verbose:
-        sys.stderr.write('Updating credentials\n')
+        write_error('Updating credentials\n')
 
     temp_cred_file = CRED_FILE + '.tmp'
     with open(temp_cred_file, 'wb') as f:
@@ -142,7 +145,7 @@ def print_file_list_info(file_list, start):
         return
 
     total_size = sum(map(lambda x: x[0], file_list))
-    sys.stderr.write('Took %s sec... scanning %s objects, %s MB...\n' % (
+    write_error('Took %s sec... scanning %s objects, %s MB...\n' % (
         int(time.time() - start), len(file_list), total_size // (1024 * 1024)))
 
 done_size = 0
@@ -156,12 +159,12 @@ def update_progress(size):
 
     percent = int(done_size * 100 / total_size)
     if percent != last_percent:
-        sys.stderr.write('%s%% ' % percent)
+        write_error('%s%% ' % percent)
         last_percent = percent
 
 def list_files_thread(file_list):
     if options.verbose:
-        sys.stderr.write('Listing objects...\n')
+        write_error('Listing objects...\n')
 
     for bucket_name, prefix in paths:
         list(s3, bucket_name, prefix, options.filter, delimiter, file_list)
@@ -290,7 +293,7 @@ except:
 
 if time.time() - cache_time < CACHE_EXPIRY:
     if options.verbose:
-        sys.stderr.write('Loading from cache...\n')
+        write_error('Loading from cache...\n')
     with open(cache_file, 'rb') as f:
         data = f.read()
     file_list = json.loads(zlib.decompress(data).decode('utf8'))
@@ -307,7 +310,7 @@ else:
 
     if options.verbose:
         str_paths = ['s3://%s/%s' % (x[0], x[1]) for x in paths]
-        sys.stderr.write('Searching paths: %s\n' % ' '.join(str_paths))
+        write_error('Searching paths: %s\n' % ' '.join(str_paths))
 
     file_list, multi_file = get_file_list_generator()
 
@@ -344,7 +347,7 @@ if (os.path.exists(ZBLOCKGREP_BIN) and not options.after_context
         grep_options += ' -h'
 
     if options.verbose:
-        sys.stderr.write('Using: zblockgrep%s\n' % grep_options)
+        write_error('Using: zblockgrep%s\n' % grep_options)
 else:
     ZBLOCKGREP_BIN = False
 
@@ -368,7 +371,7 @@ else:
         parser.error('unknown encoding "%s"' % options.encoding)
 
     if options.verbose:
-        sys.stderr.write('Using: grep%s\n' % grep_options)
+        write_error('Using: grep%s\n' % grep_options)
 
 # run the grep commands
 if ZBLOCKGREP_BIN:
@@ -421,5 +424,5 @@ else:
         p.wait()
 
 if options.verbose:
-    sys.stderr.write('\nDone, took %s sec\n' % int(time.time() - start))
+    write_error('\nDone, took %s sec\n' % int(time.time() - start))
 
