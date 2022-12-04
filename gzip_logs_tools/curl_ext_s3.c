@@ -449,6 +449,127 @@ done:
 	return rc;
 }
 
+static intptr_t
+curl_ext_s3_hextoi(char *line, size_t n)
+{
+	intptr_t value;
+	char c, ch;
+
+	if (n == 0) {
+		return -1;
+	}
+
+	for (value = 0; n--; line++) {
+		ch = *line;
+
+		if (ch >= '0' && ch <= '9') {
+			value = value * 16 + (ch - '0');
+			continue;
+		}
+
+		c = (char) (ch | 0x20);
+
+		if (c >= 'a' && c <= 'f') {
+			value = value * 16 + (c - 'a' + 10);
+			continue;
+		}
+
+		return -1;
+	}
+
+	return value;
+}
+
+static uintptr_t
+curl_ext_s3_normalize_uri(char *dst, char *src, size_t size)
+{
+	static char hex[] = "0123456789ABCDEF";
+	uintptr_t n;
+	intptr_t num;
+	char ch;
+
+					/* " ", "#", "%", "?", %00-%1F, %7F-%FF */
+
+					/* not ALPHA, DIGIT, "-", ".", "_", "~" */
+
+	static uint32_t escape[] = {
+		0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
+
+					/* ?>=< ;:98 7654 3210  /.-, +*)( '&%$ #"!  */
+		0xfc001fff, /* 1111 1100 0000 0000  0001 1111 1111 1111 */
+
+					/* _^]\ [ZYX WVUT SRQP  ONML KJIH GFED CBA@ */
+		0x78000001, /* 0111 1000 0000 0000  0000 0000 0000 0001 */
+
+					/*  ~}| {zyx wvut srqp  onml kjih gfed cba` */
+		0xb8000001, /* 1011 1000 0000 0000  0000 0000 0000 0001 */
+
+		0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
+		0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
+		0xffffffff, /* 1111 1111 1111 1111  1111 1111 1111 1111 */
+		0xffffffff  /* 1111 1111 1111 1111  1111 1111 1111 1111 */
+	};
+
+
+	if (dst == NULL) {
+
+		/* find the number of the characters to be escaped */
+
+		n = 0;
+
+		while (size) {
+			if (escape[*src >> 5] & (1U << (*src & 0x1f))) {
+				n++;
+			}
+
+			src++;
+			size--;
+		}
+
+		return (uintptr_t) n;
+	}
+
+	while (size) {
+
+		switch (*src) {
+
+		case '+':
+			ch = ' ';
+			src++;
+			size--;
+			break;
+
+		case '%':
+			if (size >= 3) {
+				num = curl_ext_s3_hextoi(src + 1, 2);
+				if (num >= 0) {
+					ch = num;
+					src += 3;
+					size -= 3;
+					break;
+				}
+			}
+
+			/* fall through */
+
+		default:
+			ch = *src++;
+			size--;
+		}
+
+		if (escape[ch >> 5] & (1U << (ch & 0x1f))) {
+			*dst++ = '%';
+			*dst++ = hex[ch >> 4];
+			*dst++ = hex[ch & 0xf];
+
+		} else {
+			*dst++ = ch;
+		}
+	}
+
+	return (uintptr_t) dst;
+}
+
 static void
 curl_ext_s3_free(void* data)
 {
@@ -466,7 +587,9 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 	curl_ext_s3_ctx_t* ctx;
 	struct curl_slist* headers;
 	struct tm* tm;
+	uintptr_t escape;
 	CURLcode res;
+	str_t norm_uri;
 	str_t bucket;
 	str_t date;
 	str_t host;
@@ -481,6 +604,7 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 
 	ctx = NULL;
 	host.data = NULL;
+	norm_uri.data = NULL;
 
 	if (!conf->key_scope.len)
 	{
@@ -499,6 +623,19 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 
 	bucket.data = url->data;
 	bucket.len = uri.data - bucket.data;
+
+	// normalize the uri
+	escape = curl_ext_s3_normalize_uri(NULL, uri.data, uri.len);
+
+	norm_uri.data = malloc(uri.len + 2 * escape);
+	if (norm_uri.data == NULL)
+	{
+		error(0, "failed to alloc uri");
+		goto failed;
+	}
+
+	norm_uri.len = (char *) curl_ext_s3_normalize_uri(norm_uri.data, uri.data,
+		uri.len) - norm_uri.data;
 
 	// get the host
 	host.data = malloc(sizeof(COMPESSED_FILE_S3_HOST) + bucket.len +
@@ -539,7 +676,7 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 	}
 
 	// authorization header
-	if (!curl_ext_s3_get_auth_header(conf, &host, &uri, &date, &auth))
+	if (!curl_ext_s3_get_auth_header(conf, &host, &norm_uri, &date, &auth))
 	{
 		goto failed;
 	}
@@ -612,7 +749,8 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 	}
 
 	// set the url
-	ctx->url = malloc(sizeof(COMPESSED_FILE_S3_SCHEME) + host.len + uri.len);
+	ctx->url = malloc(sizeof(COMPESSED_FILE_S3_SCHEME) + host.len +
+		norm_uri.len);
 	if (ctx->url == NULL)
 	{
 		error(0, "alloc url failed");
@@ -620,7 +758,7 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 	}
 
 	sprintf(ctx->url, "%s%.*s%.*s", COMPESSED_FILE_S3_SCHEME, str_f(host),
-		str_f(uri));
+		str_f(norm_uri));
 
 	res = curl_easy_setopt(curl, CURLOPT_URL, ctx->url);
 	if (res != CURLE_OK)
@@ -630,6 +768,7 @@ curl_ext_s3_init(void* c, str_t* url, CURL* curl)
 	}
 
 	free(host.data);
+	free(norm_uri.data);
 	return ctx;
 
 failed:
@@ -638,7 +777,9 @@ failed:
 	{
 		curl_ext_s3_free(ctx);
 	}
+
 	free(host.data);
+	free(norm_uri.data);
 	return NULL;
 }
 
