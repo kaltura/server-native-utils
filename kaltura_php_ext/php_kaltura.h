@@ -5,8 +5,8 @@
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_kaltura_serialize_xml, 0, 0, 2)
  ZEND_ARG_INFO(0, firstArg)
- ZEND_ARG_OBJ_INFO(0, object)
- ZEND_ARG_OBJ_INFO(0, ignoreNull)
+ ZEND_ARG_INFO(0, object)
+ ZEND_ARG_INFO(0, ignoreNull)
 ZEND_END_ARG_INFO()
 
 PHP_FUNCTION(kaltura_serialize_xml);
