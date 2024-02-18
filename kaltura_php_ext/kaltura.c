@@ -48,7 +48,11 @@ ZEND_API zend_class_entry *zend_exception_get_default(TSRMLS_D);
    	smart_string_appendl_ex((dest), (src), sizeof(src) - 1, 0)
 
 static zend_function_entry kaltura_functions[] = {
+#if (PHP_VERSION_ID >= 80000)
     PHP_FE(kaltura_serialize_xml, arginfo_kaltura_serialize_xml)
+#else
+	PHP_FE(kaltura_serialize_xml, NULL)
+#endif
     {NULL, NULL, NULL}
 };
 
