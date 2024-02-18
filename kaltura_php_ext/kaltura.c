@@ -51,7 +51,7 @@ static zend_function_entry kaltura_functions[] = {
 #if (PHP_VERSION_ID >= 80000)
     PHP_FE(kaltura_serialize_xml, arginfo_kaltura_serialize_xml)
 #else
-	PHP_FE(kaltura_serialize_xml, NULL)
+    PHP_FE(kaltura_serialize_xml, NULL)
 #endif
     {NULL, NULL, NULL}
 };
