@@ -5,13 +5,28 @@
 #include "php_kaltura.h"
 #include "zend_exceptions.h"
 
-#if (PHP_VERSION_ID < 70000)
-#include "php_smart_str.h"
-#include "php_versions/php_5.h"
-#else
+#ifndef TSRMLS_D
+#define TSRMLS_D void
+#define TSRMLS_DC
+#define TSRMLS_C
+#define TSRMLS_CC
+#define TSRMLS_FETCH()
+#endif
+
+#if (PHP_VERSION_ID >= 70000)
 #include "ext/standard/php_smart_string.h"
-#include "php_versions/php_7.h"
 zval dummy;
+#else
+#include "php_smart_str.h"
+#endif
+
+
+#if (PHP_VERSION_ID >= 80000)
+#include "php_versions/php_8.h"
+#elif (PHP_VERSION_ID >= 70000)
+#include "php_versions/php_7.h"
+#else
+#include "php_versions/php_5.h"
 #endif
 
 typedef struct
@@ -33,7 +48,11 @@ ZEND_API zend_class_entry *zend_exception_get_default(TSRMLS_D);
    	smart_string_appendl_ex((dest), (src), sizeof(src) - 1, 0)
 
 static zend_function_entry kaltura_functions[] = {
+#if (PHP_VERSION_ID >= 80000)
+    PHP_FE(kaltura_serialize_xml, arginfo_kaltura_serialize_xml)
+#else
     PHP_FE(kaltura_serialize_xml, NULL)
+#endif
     {NULL, NULL, NULL}
 };
 
@@ -624,7 +643,6 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 		#else
 			Z_OBJ_HANDLER(**arg, get_class_name)(*arg, &class_name, &class_name_len, 0 TSRMLS_CC);
 		#endif
-
 			if (instanceof_function(Z_OBJCE_P(*arg), zend_exception_get_default(TSRMLS_C)))
 			{
 				// exceptions
@@ -633,12 +651,10 @@ PHPAPI void kaltura_serialize_xml_internal(zval **arg, serialize_params_t* param
 				smart_str_appendl_fixed(&params->buf, "<error><objectType>");
 				smart_string_append_class_name(&params->buf, class_name, class_name_len);
 				smart_str_appendl_fixed(&params->buf, "</objectType><code>");
-
 				prop = zend_read_property_wrapper(zend_exception_get_default(TSRMLS_C), *arg, "code", sizeof("code") - 1, 0);
 
 				kaltura_serialize_xml_internal(&prop, params);
 				smart_str_appendl_fixed(&params->buf, "</code><message>");
-
 				prop = zend_read_property_wrapper(zend_exception_get_default(TSRMLS_C), *arg, "message", sizeof("message") - 1, 0);
 
 				kaltura_serialize_xml_internal(&prop, params);
